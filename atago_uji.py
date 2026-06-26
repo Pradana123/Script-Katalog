@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ATAGO -> uji.co.id WooCommerce catalog generator.
+"""ATAGO -> WooCommerce catalog generator.
 
 Script khusus ATAGO.
 
@@ -11,10 +11,7 @@ Fokus:
 - produk aksesori/komponen ATAGO tetap masuk output dan diberi kategori khusus;
 - output memakai format kolom WooCommerce seperti script PCE.
 
-Contoh pakai:
-python atago_uji_import_ready.py --input "atago.xlsx" --output "uji_atago_import_ready.xlsx"
-python atago_uji_import_ready.py --input "atago.xlsx" --sheet atago_with_price --output "uji_atago_import_ready.xlsx" --delay 0.5
-"""
+
 from __future__ import annotations
 
 import argparse
@@ -223,8 +220,8 @@ ACCESSORY_FAMILY = {
 
 UJI_CTA = (
     '<p>Untuk konsultasi produk, silakan kunjungi '
-    '<strong><a href="https://uji.co.id/about-us-3/" target="_blank" rel="noopener">uji.co.id</a></strong> '
-    'atau <strong><a href="https://uji.co.id/contact-us/" target="_blank" rel="noopener">hubungi kami</a></strong>. '
+    '<strong><a href="https://nama-website-kalian/about-us-3/" target="_blank" rel="noopener">nama-website-kalian</a></strong> '
+    'atau <strong><a href="https://nama-website-kalian/contact-us/" target="_blank" rel="noopener">hubungi kami</a></strong>. '
     'Telepon: +62896-2784-2222.</p>'
 )
 
@@ -853,7 +850,7 @@ def _validate_ai_content(data: Dict[str, Any]) -> Tuple[bool, str, Dict[str, str
 
 def _build_deepseek_messages(payload: Dict[str, Any]) -> List[Dict[str, str]]:
     system_prompt = (
-        "Anda adalah penulis katalog teknis berbahasa Indonesia untuk uji.co.id. "
+        "Anda adalah penulis katalog teknis berbahasa Indonesia untuk nama-website-kalian. "
         "Tulis copy produk ATAGO yang natural, rapi, dan tidak terdengar seperti template. "
         "Gunakan hanya data yang diberikan. Jangan membuat klaim harga, stok, promo, garansi, sertifikasi, akurasi, range, atau fitur yang tidak ada pada data. "
         "Nama produk, model, Cat.No., SKU, dan satuan teknis harus dipertahankan apa adanya. "
@@ -862,7 +859,7 @@ def _build_deepseek_messages(payload: Dict[str, Any]) -> List[Dict[str, str]]:
         "Balas JSON valid saja."
     )
     user_prompt = {
-        "task": "Buat konten WooCommerce uji.co.id untuk produk ATAGO dalam bahasa Indonesia.",
+        "task": "Buat konten WooCommerce nama-website-kalian untuk produk ATAGO dalam bahasa Indonesia.",
         "output_schema": {
             "product_description_html": "HTML aman: 2 paragraf pembuka, <h2>Fungsi dan Keunggulan</h2> + <ul>, <h2>Contoh Penggunaan</h2> + paragraf/ul, <h2>Informasi Pemilihan Produk</h2> + paragraf. Tanpa CTA kontak.",
             "short_description": "1-2 kalimat ringkas maksimal 260 karakter.",
@@ -1159,13 +1156,13 @@ def build_faq(title: str, family: Dict[str, Any]) -> str:
 
 def build_meta_description(title: str, family: Dict[str, Any], spec_rows: List[Dict[str, str]]) -> str:
     if family.get("category") == ACCESSORY_FAMILY["category"]:
-        meta = f"{title} adalah aksesori/komponen ATAGO. Cek model, Cat.No., dan konsultasi kebutuhan di uji.co.id."
+        meta = f"{title} adalah aksesori/komponen ATAGO. Cek model, Cat.No., dan konsultasi kebutuhan di nama-website-kalian."
         return compact(meta, max_chars=155)
     range_val = get_spec_value(spec_rows, "Rentang")
     if range_val:
-        meta = f"{title} dari ATAGO untuk {family['function']}. Rentang: {range_val}. Hubungi uji.co.id."
+        meta = f"{title} dari ATAGO untuk {family['function']}. Rentang: {range_val}. Hubungi nama-website-kalian."
     else:
-        meta = f"{title} dari ATAGO untuk pengukuran dan kontrol kualitas sampel. Cek spesifikasi dan konsultasi di uji.co.id."
+        meta = f"{title} dari ATAGO untuk pengukuran dan kontrol kualitas sampel. Cek spesifikasi dan konsultasi di nama-website-kalian."
     return compact(meta, max_chars=155)
 
 def build_output_row(data: Dict[str, Any], pub_date: datetime, processing_label: str) -> Dict[str, Any]:
@@ -1331,7 +1328,7 @@ def write_outputs(rows: List[Dict[str, Any]], skipped: List[Dict[str, Any]], out
 # ----------------------------- CLI -----------------------------
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="ATAGO product/accessory link scraper to WooCommerce import format for uji.co.id")
+    parser = argparse.ArgumentParser(description="ATAGO product/accessory link scraper to WooCommerce import format for nama-website-kalian")
     parser.add_argument("--input", required=True, help="Path Excel input berisi link produk ATAGO")
     parser.add_argument("--output", default="uji_atago_import_ready.xlsx", help="Path output Excel WooCommerce")
     parser.add_argument("--sheet", default=0, help="Nama sheet atau index sheet. Default: 0 / sheet pertama")
