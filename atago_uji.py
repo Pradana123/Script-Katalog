@@ -222,7 +222,7 @@ UJI_CTA = (
     '<p>Untuk konsultasi produk, silakan kunjungi '
     '<strong><a href="https://nama-website-kalian/about-us-3/" target="_blank" rel="noopener">nama-website-kalian</a></strong> '
     'atau <strong><a href="https://nama-website-kalian/contact-us/" target="_blank" rel="noopener">hubungi kami</a></strong>. '
-    'Telepon: +62896-2784-2222.</p>'
+    'Telepon: +6200000000000.</p>'
 )
 
 
