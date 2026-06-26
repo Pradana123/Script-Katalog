@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LUTRON -> uji.co.id WooCommerce catalog generator v10, description-led category-safe Indonesian WordPress output.
+"""LUTRON -> nama-website-kalian WooCommerce catalog generator v10, description-led category-safe Indonesian WordPress output.
 
 Fitur utama:
 - menerima URL produk LUTRON dan/atau LUTRON dalam satu Excel;
@@ -9,12 +9,10 @@ Fitur utama:
 - menyimpan seluruh konten resmi produk pada tab "Informasi Produk Resmi";
 - memakai title/model/brand dari Excel sebagai fallback apabila elemen halaman
   produk tidak tersedia;
-- output mengikuti kolom WooCommerce/uji.co.id seperti script LUTRON sebelumnya.
+
 
 Contoh:
-python uji_catalog_import_LUTRON_lutron.py --input "lutron.com.tw.xlsx" --output "uji_lutron_import_ready.xlsx"
-python uji_catalog_import_LUTRON_lutron.py --input "produk_mixed.xlsx" --output "uji_mixed_import_ready.xlsx" --delay 0.6
-python uji_catalog_import_LUTRON_lutron.py --input "lutron.com.tw.xlsx" --use-ai --deepseek-api-key "YOUR_KEY"
+
 """
 from __future__ import annotations
 
@@ -104,8 +102,8 @@ DEFAULT_HEADERS = {
 
 UJI_CTA = (
     '<p>Untuk konsultasi produk, silakan kunjungi '
-    '<strong><a href="https://uji.co.id/about-us-3/" target="_blank" rel="noopener">uji.co.id</a></strong> '
-    'atau <strong><a href="https://uji.co.id/contact-us/" target="_blank" rel="noopener">hubungi kami</a></strong>. '
+    '<strong><a href="https://nama-website-kalian/about-us-3/" target="_blank" rel="noopener">nama-website-kalian</a></strong> '
+    'atau <strong><a href="https://nama-website-kalian/contact-us/" target="_blank" rel="noopener">hubungi kami</a></strong>. '
     'Telepon: +62896-2784-2222.</p>'
 )
 
@@ -2414,12 +2412,12 @@ def build_faq(data: Dict[str, Any], family: Dict[str, Any]) -> str:
 def build_meta_description(data: Dict[str, Any], family: Dict[str, Any]) -> str:
     title, brand = clean_text(data.get("title")), clean_text(data.get("brand"))
     if data.get("is_accessory"):
-        return compact(f"{title} adalah aksesori atau komponen {brand}. Periksa kompatibilitas model dan spesifikasinya di uji.co.id.", 155)
+        return compact(f"{title} adalah aksesori atau komponen {brand}. Periksa kompatibilitas model dan spesifikasinya di nama-website-kalian.", 155)
     range_value = spec_value(data.get("spec_rows") or [], ["range", "measurement range"])
     text = f"{title} dari {brand} untuk {family['function']}."
     if range_value:
         text += f" Rentang: {range_value}."
-    text += " Cek spesifikasi di uji.co.id."
+    text += " Cek spesifikasi di nama-website-kalian."
     return compact(text, 155)
 
 
@@ -2702,7 +2700,7 @@ def _call_ai(payload: Dict[str, Any]) -> Tuple[bool, Dict[str, Any], str]:
             {
                 "role": "system",
                 "content": (
-                    "Anda adalah penerjemah teknis dan penulis katalog produk industri untuk uji.co.id. "
+                    "Anda adalah penerjemah teknis dan penulis katalog produk industri untuk nama-website-kalian. "
                     "Tulis dalam bahasa Indonesia baku. Semua karakter Chinese dilarang. "
                     "Jaga fakta teknis tetap akurat. Balas JSON valid saja."
                 ),
@@ -2971,7 +2969,7 @@ def write_outputs(rows: Sequence[Dict[str, Any]], skipped: Sequence[Dict[str, An
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Scrape katalog produk LUTRON ke format WooCommerce uji.co.id dengan kategori dari judul dan deskripsi resmi")
+    p = argparse.ArgumentParser(description="Scrape katalog produk LUTRON ke format WooCommerce nama-website-kalian dengan kategori dari judul dan deskripsi resmi")
     p.add_argument("--input", required=True, help="Excel berisi URL produk")
     p.add_argument("--output", default="uji_catalog_import_ready.xlsx", help="Output Excel WooCommerce")
     p.add_argument("--sheet", default=0, help="Nama atau indeks sheet input")
