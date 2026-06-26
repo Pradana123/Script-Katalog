@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
-"""PCE Instruments -> uji.co.id WooCommerce catalog generator.
+"""PCE Instruments -> nama-website-kalian WooCommerce catalog generator.
 
 V3_PARAM_CLEAN: nama produk resmi dipertahankan apa adanya; pembersihan bahasa difokuskan pada parameter, highlight teknis, kategori, tag, dan narasi publik.
 
 Versi ini dibuat untuk file PCE, bukan AMTAST. Fokus utamanya:
 - membaca struktur kolom PCE seperti link, Judul, Tags, Image, Short_Description, Brand, Order No;
-- membuat Product Description HTML dengan gaya katalog uji.co.id;
+- membuat Product Description HTML dengan gaya katalog nama-website-kalian;
 - mengurangi pola kalimat yang terlalu template/AI;
 - menangani produk utama dan aksesori/komponen secara berbeda;
 - menjaga agar klaim teknis tetap berasal dari data website PCE atau Excel.
 - memprioritaskan deskripsi asli dari link website PCE ketika tersedia.
 
-Contoh:
-python pce_uji_import_ready_v2.py --input "pce-import.xlsx" --final-output "uji_pce_import_ready.xlsx"
 """
 from __future__ import annotations
 
@@ -65,9 +63,9 @@ OUTPUT_COLS = [
 
 UJI_CTA = (
     '<p>Untuk konsultasi produk, silakan kunjungi '
-    '<strong><a href="https://uji.co.id/about-us-3/" target="_blank" rel="noopener">uji.co.id</a></strong> '
-    'atau <strong><a href="https://uji.co.id/contact-us/" target="_blank" rel="noopener">hubungi kami</a></strong>. '
-    'Telepon: +62896-2784-2222.</p>'
+    '<strong><a href="https://nama-website-kalian/about-us-3/" target="_blank" rel="noopener">nama-website-kalian</a></strong> '
+    'atau <strong><a href="https://nama-website-kalian/contact-us/" target="_blank" rel="noopener">hubungi kami</a></strong>. '
+    'Telepon: +62000000000000.</p>'
 )
 
 BAD_EMPTY = {"", "nan", "none", "null", "empty", "-"}
@@ -1720,13 +1718,13 @@ def meta_description(row: Dict[str, str]) -> str:
     cat = public_category(row.get("category", ""), fam, row.get("is_accessory", False))
     if row.get("is_accessory", False):
         candidates = [
-            f"{name} aksesori PCE untuk unit kompatibel. Cek fungsi, kecocokan model, dan detail produk di uji.co.id.",
-            f"{name} aksesori PCE. Cek kompatibilitas dan detail produk di uji.co.id.",
+            f"{name} aksesori PCE untuk unit kompatibel. Cek fungsi, kecocokan model, dan detail produk di nama-website-kalian.",
+            f"{name} aksesori PCE. Cek kompatibilitas dan detail produk di nama-website-kalian.",
         ]
     else:
         candidates = [
-            f"{name} PCE Instruments untuk {cat}. Cek fungsi, spesifikasi, dan konsultasi produk di uji.co.id.",
-            f"{name} PCE Instruments. Cek fungsi dan spesifikasi produk di uji.co.id.",
+            f"{name} PCE Instruments untuk {cat}. Cek fungsi, spesifikasi, dan konsultasi produk di nama-website-kalian.",
+            f"{name} PCE Instruments. Cek fungsi dan spesifikasi produk di nama-website-kalian.",
         ]
     for s in candidates:
         if len(s) <= 158:
@@ -3575,7 +3573,7 @@ def _validate_ai_content(data: Dict[str, Any]) -> Tuple[bool, str, Dict[str, str
 
 def _build_deepseek_messages(payload: Dict[str, Any]) -> List[Dict[str, str]]:
     system_prompt = (
-        "Anda adalah penulis katalog teknis berbahasa Indonesia untuk uji.co.id. "
+        "Anda adalah penulis katalog teknis berbahasa Indonesia untuk nama-website-kalian. "
         "Tulis copy produk yang natural, tidak terdengar seperti template, dan tidak mengarang spesifikasi. "
         "Gunakan hanya data yang diberikan. Jangan membuat klaim harga, garansi, stok, promo, sertifikasi, atau akurasi jika tidak ada pada data. "
         "Nama produk/SKU/model harus dipertahankan apa adanya. Satuan teknis seperti °C, %, ppm, g, Hz boleh tetap. "
@@ -3584,7 +3582,7 @@ def _build_deepseek_messages(payload: Dict[str, Any]) -> List[Dict[str, str]]:
         "Balas JSON valid saja."
     )
     user_prompt = {
-        "task": "Buat konten katalog WooCommerce uji.co.id dalam bahasa Indonesia.",
+        "task": "Buat konten katalog WooCommerce nama-website-kalian dalam bahasa Indonesia.",
         "output_schema": {
             "product_description_html": "HTML: 2 paragraf pembuka, <h2>Fungsi dan Keunggulan ...</h2> + <ul>, <h2>Contoh Penggunaan</h2> + paragraf/ul, <h2>Informasi Pemilihan Produk</h2> + paragraf. Tanpa CTA kontak.",
             "short_description": "1 kalimat ringkas maksimal 220 karakter.",
@@ -4036,7 +4034,7 @@ def _sanitize_ai_text(value: Any, max_chars: int = 220, fallback: str = "") -> s
 
 def _build_deepseek_messages(payload: Dict[str, Any]) -> List[Dict[str, str]]:
     system_prompt = (
-        "Anda adalah penulis katalog teknis berbahasa Indonesia untuk uji.co.id. "
+        "Anda adalah penulis katalog teknis berbahasa Indonesia untuk nama-website-kalian. "
         "Tulis copy produk yang natural, rapi, dan faktual. Gunakan hanya data yang diberikan. "
         "Jangan mengarang spesifikasi, isi paket, harga, stok, promo, garansi, sertifikasi, atau klaim akurasi. "
         "Nama produk/SKU/model harus dipertahankan apa adanya. Satuan teknis seperti °C, %, ppm, g, Hz boleh tetap. "
@@ -4046,7 +4044,7 @@ def _build_deepseek_messages(payload: Dict[str, Any]) -> List[Dict[str, str]]:
         "Balas JSON valid saja."
     )
     user_prompt = {
-        "task": "Buat konten katalog WooCommerce uji.co.id dalam bahasa Indonesia.",
+        "task": "Buat konten katalog WooCommerce nama-website-kalian dalam bahasa Indonesia.",
         "output_schema": {
             "product_description_html": "HTML: 2 paragraf pembuka, <h2>Fungsi dan Keunggulan ...</h2> + <ul>, <h2>Contoh Penggunaan</h2> + paragraf/ul, <h2>Informasi Pemilihan Produk</h2> + paragraf. Tanpa CTA kontak.",
             "short_description": "1 kalimat ringkas maksimal 220 karakter.",
