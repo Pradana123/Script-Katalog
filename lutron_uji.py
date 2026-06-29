@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LUTRON -> uji.co.id WooCommerce catalog generator v10, description-led category-safe Indonesian WordPress output.
+"""LUTRON -> nama-website-kalian WooCommerce catalog generator v13, technical-spec-safe Indonesian WordPress output.
 
 Fitur utama:
 - menerima URL produk LUTRON dan/atau LUTRON dalam satu Excel;
@@ -9,7 +9,7 @@ Fitur utama:
 - menyimpan seluruh konten resmi produk pada tab "Informasi Produk Resmi";
 - memakai title/model/brand dari Excel sebagai fallback apabila elemen halaman
   produk tidak tersedia;
-- output mengikuti kolom WooCommerce/uji.co.id seperti script LUTRON sebelumnya.
+- output mengikuti kolom WooCommerce/nama-website-kalian seperti script LUTRON sebelumnya.
 
 Contoh:
 python uji_catalog_import_LUTRON_lutron.py --input "lutron.com.tw.xlsx" --output "uji_lutron_import_ready.xlsx"
@@ -31,6 +31,7 @@ import tempfile
 from io import BytesIO
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 from urllib.parse import quote, quote_plus, unquote, urljoin, urlparse, urlsplit, urlunsplit
@@ -104,9 +105,9 @@ DEFAULT_HEADERS = {
 
 UJI_CTA = (
     '<p>Untuk konsultasi produk, silakan kunjungi '
-    '<strong><a href="https://uji.co.id/about-us-3/" target="_blank" rel="noopener">uji.co.id</a></strong> '
-    'atau <strong><a href="https://uji.co.id/contact-us/" target="_blank" rel="noopener">hubungi kami</a></strong>. '
-    'Telepon: +62896-2784-2222.</p>'
+    '<strong><a href="https://nama-website-kalian/about-us-3/" target="_blank" rel="noopener">nama-website-kalian</a></strong> '
+    'atau <strong><a href="https://nama-website-kalian/contact-us/" target="_blank" rel="noopener">hubungi kami</a></strong>. '
+    'Telepon: +62 000000000000.</p>'
 )
 
 NOISE_TEXT = {
@@ -442,6 +443,45 @@ def table_html(rows: Sequence[Dict[str, str]]) -> str:
         if label and value:
             body.append(f"<tr><th>{label}</th><td>{value}</td></tr>")
     return '<table class="uji-spec-table"><tbody>' + "".join(body) + "</tbody></table>" if body else ""
+
+
+def _is_technical_spec_section(value: Any) -> bool:
+    """True when a source section is a dedicated technical narrative block."""
+    text = clean_text(value)
+    return bool(re.search(r"\b(?:technical\s+specifications?|technical\s+data|measurement\s+specifications?)\b", text, re.I))
+
+
+def specifications_tab_html(rows: Sequence[Dict[str, str]], already_deduplicated: bool = False) -> str:
+    """Render one specification table.
+
+    When DeepSeek AI deduplication is enabled, rows have already been selected
+    from the full raw source list. Do not run the rule-based deduplicator again,
+    otherwise it could remove a separate Meter/Probe or range-specific fact
+    after the AI has deliberately retained it.
+    """
+    if already_deduplicated:
+        cleaned_rows: List[Dict[str, str]] = []
+        seen = set()
+        for raw in rows or []:
+            if not isinstance(raw, dict):
+                continue
+            label = clean_text(raw.get("label"))
+            value = clean_text(raw.get("value"))
+            if not label or not value:
+                continue
+            # Guard only against an exact repeated output row. Semantic duplicate
+            # selection remains DeepSeek's responsibility in AI mode.
+            key = (_spec_text_key(label), _spec_text_key(value))
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned_rows.append({"label": label, "value": value})
+    else:
+        cleaned_rows, _issues = canonicalize_specifications(rows)
+
+    if not cleaned_rows:
+        return "<h2>Spesifikasi</h2><p>Spesifikasi belum tersedia dalam bahasa Indonesia.</p>"
+    return "<h2>Spesifikasi</h2>" + table_html(cleaned_rows)
 
 
 # ---------------------------------------------------------------------------
@@ -881,46 +921,79 @@ def normalize_content_line(text: str) -> str:
     return text.strip(" |\t\n")
 
 
-def extract_all_content(root: Tag, title: str) -> List[Tuple[str, str, str]]:
-    """Return non-noise visible product content as (kind, heading, text).
+def _node_text_lines(node: Tag) -> List[str]:
+    """Return visible node text while retaining manual line breaks from <br> elements."""
+    try:
+        raw = node.get_text("\n", strip=True)
+    except Exception:
+        raw = soup_text(node)
+    return [normalize_content_line(part) for part in clean_text(raw).splitlines() if normalize_content_line(part)]
 
-    The parser uses structural elements instead of one vendor-specific class so
-    it continues to work when Lutron changes small layout details.
+
+def _looks_like_section_heading(node: Tag, value: str) -> bool:
+    """Recognise semantic and div-based headings used by Lutron/Quasar pages."""
+    text = normalize_content_line(value)
+    heading_text = text.strip(" :–—-|")
+    if not heading_text or len(heading_text) > 150:
+        return False
+    if node.name in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+        return not is_noise_text(heading_text)
+    # Some Lutron templates use a styled div/span instead of an h2/h3.
+    if SPEC_HEADING_RE.fullmatch(heading_text) or re.fullmatch(
+        r"(?:technical\s+specifications?|technical\s+data|specifications?|"
+        r"features|versatile\s+applications|applications|standard\s+accessories|"
+        r"optional\s+accessories|data\s+output)",
+        heading_text,
+        flags=re.I,
+    ):
+        return True
+    class_id = " ".join([clean_text(node.get("class")), clean_text(node.get("id"))]).casefold()
+    return bool(re.search(r"(?:title|heading|section).*(?:spec|technical)|(?:spec|technical).*(?:title|heading|section)", class_id))
+
+
+def extract_all_content(root: Tag, title: str) -> List[Tuple[str, str, str]]:
+    """Return non-noise product content as ``(kind, section, text)``.
+
+    This deliberately preserves line breaks inside paragraphs/divs while
+    excluding table rows, which are parsed separately. On Lutron pages the
+    ``Technical Specifications`` block can be a Quasar ``div`` with
+    ``<br>`` separated facts rather than semantic list/table markup. The old
+    parser ignored that shape or collapsed the full block into one sentence.
     """
     items: List[Tuple[str, str, str]] = []
     heading = "Informasi Produk"
     seen = set()
-    max_items = 180
+    max_items = 420
+    target_names = ["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "dt", "dd", "div"]
 
-    for node in root.find_all(["h1", "h2", "h3", "h4", "h5", "p", "li", "dt", "dd", "tr"], recursive=True):
-        if len(items) >= max_items:
+    for node in root.find_all(target_names, recursive=True):
+        if len(items) >= max_items or not isinstance(node, Tag):
             break
-        if not isinstance(node, Tag):
+        # A div that contains a semantic child is only a layout wrapper. Reading
+        # it would duplicate every line below. Leaf divs still matter because
+        # Lutron often uses them as visual section headings or text blocks.
+        if node.name == "div" and node.find(["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "dt", "dd", "tr", "div"], recursive=False):
             continue
-        if node.name in {"h1", "h2", "h3", "h4", "h5"}:
-            possible = normalize_content_line(soup_text(node))
-            if possible and not is_noise_text(possible):
-                heading = possible[:180]
-            continue
-        if node.name == "tr":
-            cells = [normalize_content_line(soup_text(c)) for c in node.find_all(["th", "td"], recursive=False)]
-            cells = [c for c in cells if c]
-            if len(cells) >= 2:
-                text = ": ".join(cells)
-            else:
-                continue
-        else:
-            text = normalize_content_line(soup_text(node))
-        if not text or is_noise_text(text) or len(text) < 2:
-            continue
-        if text.casefold() == clean_text(title).casefold():
-            continue
-        key = (heading.casefold(), text.casefold())
-        if key in seen:
-            continue
-        seen.add(key)
+
+        # Table rows belong exclusively to the structured-table extractor in
+        # extract_specs(). Reading them again as narrative content causes the
+        # same source fact to appear twice in the final WooCommerce table.
+        lines = _node_text_lines(node)
         kind = "li" if node.name == "li" else "text"
-        items.append((kind, heading, text))
+
+        for line in lines:
+            if _looks_like_section_heading(node, line):
+                heading = line.strip(" :–—-|")[:180]
+                continue
+            if not line or is_noise_text(line) or len(line) < 2:
+                continue
+            if line.casefold() == clean_text(title).casefold():
+                continue
+            key = (heading.casefold(), line.casefold())
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append((kind, heading, line))
     return items
 
 
@@ -960,6 +1033,7 @@ def all_content_html(items: Sequence[Tuple[str, str, str]], title: str, max_char
 def clean_spec_value(value: str) -> str:
     value = normalize_content_line(value)
     value = re.sub(r"\s*\|\s*", " / ", value)
+    value = re.sub(r"\s{2,}", " ", value)
     return value.strip(" :–—|/")
 
 
@@ -967,101 +1041,491 @@ def looks_like_spec_label(value: str) -> bool:
     value = clean_spec_value(value)
     if not (2 <= len(value) <= 120):
         return False
-    if len(value.split()) > 10:
+    if len(value.split()) > 11:
         return False
     return True
 
 
-def dedupe_specs(rows: Sequence[Dict[str, str]]) -> List[Dict[str, str]]:
-    out: List[Dict[str, str]] = []
+def _spec_text_key(value: Any) -> str:
+    text = clean_spec_value(value).casefold()
+    text = text.replace("℃", "c").replace("°", "")
+    return re.sub(r"[^a-z0-9]+", "", text)
+
+
+def _spec_numbers(value: Any) -> List[str]:
+    return [token.replace(",", ".") for token in re.findall(r"[-+]?\d+(?:[.,]\d+)?", clean_text(value))]
+
+
+def _spec_unit_signature(value: Any) -> Tuple[str, ...]:
+    """Return units that make equal numeric values comparable safely."""
+    text = clean_text(value).casefold().replace("℃", "c").replace("℉", "f")
+    units = re.findall(r"(?:%\s*r\.?h\.?|%|(?:dc|ac)|ma|mv|kv|v|w|(?:kg|mg|lb|lbs|gram|g)|(?:mm|cm|inch|in\.?|m)|°?\s*[cf])", text, re.I)
+    return tuple(sorted(set(re.sub(r"\s+", "", u).strip(".") for u in units)))
+
+
+def _spec_values_equivalent(left: Any, right: Any) -> bool:
+    """Compare values without treating changed technical numbers as duplicates.
+
+    Lutron writes the same fact in several cosmetic forms, such as
+    ``Less than 80% RH`` and ``< 80 % RH``. Equal numbers plus the same unit
+    category are equivalent for humidity, temperature, power, dimensions, and
+    weight. Values with different units are never merged merely because their
+    numeric tokens match.
+    """
+    a, b = _spec_text_key(left), _spec_text_key(right)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    a_numbers, b_numbers = _spec_numbers(left), _spec_numbers(right)
+    if a_numbers != b_numbers:
+        return False
+    a_units, b_units = _spec_unit_signature(left), _spec_unit_signature(right)
+    # Different source wording around one physical fact is cosmetic when
+    # numbers and unit category agree.
+    if (_dimension_like(left) and _dimension_like(right)) or (_weight_like(left) and _weight_like(right)):
+        return True
+    if _humidity_like(left) and _humidity_like(right):
+        return True
+    if ((_temperature_like(left) and _temperature_like(right)) or (_power_like(left) and _power_like(right))) and a_units == b_units:
+        return True
+    short, long = min(a, b, key=len), max(a, b, key=len)
+    return len(short) >= 10 and short in long
+
+
+# Canonical keys express fact meaning. The rules accept English source labels
+# and Indonesian labels produced by AI/fallback so the final audit can run both
+# before and after translation.
+_CANONICAL_LABEL_RULES: List[Tuple[re.Pattern[str], str, str]] = [
+    (re.compile(r"\b(?:model|sku|mpn|catalog(?:ue)?\s*(?:no|number)?|part\s*(?:no|number)|item\s*(?:no|number))\b", re.I), "model", "Model"),
+    (re.compile(r"\b(?:main\s*(?:instrument|unit)|instrumen\s*utama).*\b(?:dimension|dimensions|dimensi)\b|\b(?:main\s*(?:instrument|unit)|instrumen\s*utama)\b", re.I), "dimensions_main_unit", "Dimensi instrumen utama"),
+    (re.compile(r"\b(?:meter|instrument|unit|alat)\s*(?:dimension|dimensions|dimensi)\b|\b(?:dimension|dimensions|dimensi)\s*(?:meter|instrument|unit|alat)\b", re.I), "dimensions_meter", "Dimensi meter"),
+    (re.compile(r"\b(?:probe|sensor)\s*(?:dimension|dimensions|dimensi)\b|\b(?:dimension|dimensions|dimensi)\s*(?:probe|sensor)\b", re.I), "dimensions_probe", "Dimensi probe"),
+    (re.compile(r"\b(?:dimension|dimensions|dimensi)\b", re.I), "dimensions", "Dimensi"),
+    (re.compile(r"\b(?:meter|instrument|unit|alat)\s*(?:weight|berat)\b|\b(?:weight|berat)\s*(?:meter|instrument|unit|alat)\b", re.I), "weight_meter", "Berat meter"),
+    (re.compile(r"\b(?:probe|sensor)\s*(?:weight|berat)\b|\b(?:weight|berat)\s*(?:probe|sensor)\b", re.I), "weight_probe", "Berat probe"),
+    (re.compile(r"\b(?:weight|berat)\b", re.I), "weight", "Berat"),
+    (re.compile(r"\b(?:operating|working|ambient)\s*(?:temperature|suhu)\b|\b(?:temperature|suhu)\s*(?:operasi|kerja|lingkungan)\b", re.I), "operating_temperature", "Suhu operasi"),
+    (re.compile(r"\b(?:operating|working|ambient)\s*(?:humidity|kelembapan|kelembaban)\b|\b(?:humidity|kelembapan|kelembaban)\s*(?:operasi|kerja|lingkungan)\b", re.I), "operating_humidity", "Kelembapan operasi"),
+    (re.compile(r"\b(?:measurement|measuring)\s*(?:range|rentang)|\b(?:range|rentang)\s*(?:measurement|pengukuran)\b", re.I), "measurement_range", "Rentang pengukuran"),
+    (re.compile(r"\bfrequency\s+response\b|\brespons\s+frekuensi\b", re.I), "frequency_response", "Respons frekuensi"),
+    (re.compile(r"\bfrequency\s+(?:range|band)\b|\brentang\s+frekuensi\b", re.I), "frequency_range", "Rentang frekuensi"),
+    (re.compile(r"\bfrequency\s+accuracy\b|\bakurasi\s+frekuensi\b", re.I), "frequency_accuracy", "Akurasi frekuensi"),
+    (re.compile(r"\b(?:data\s+error|error\s+no\.?|kesalahan\s+data)\b", re.I), "data_error_rate", "Kesalahan data"),
+    (re.compile(r"\b(?:full\s+scale\s+deflection|defleksi\s+skala\s+penuh)\b", re.I), "full_scale_deflection", "Defleksi skala penuh"),
+    (re.compile(r"\b(?:resolution|resolusi)\b", re.I), "resolution", "Resolusi"),
+    (re.compile(r"\b(?:accuracy|akurasi|error|kesalahan)\b", re.I), "accuracy", "Akurasi"),
+    (re.compile(r"\b(?:display\s+sampling\s+time|sampling\s+time\s+of\s+display|waktu\s+sampling\s+tampilan)\b", re.I), "display_sampling_time", "Waktu sampling tampilan"),
+    (re.compile(r"\b(?:data\s*logger|datalogger|pencatat\s+data).*\b(?:sampling\s+time|waktu\s+sampling)\b", re.I), "datalogger_sampling_time", "Waktu sampling pencatat data"),
+    (re.compile(r"\b(?:sampling\s+time|waktu\s+sampling)\b", re.I), "sampling_time", "Waktu sampling"),
+    (re.compile(r"\b(?:power\s+supply|catu\s+daya|sumber\s+daya)\b", re.I), "power_supply", "Catu daya"),
+    # Specific power modes must be evaluated before generic power draw.
+    # Otherwise "Power Consumption - Normal Operation" and
+    # "Power Consumption - Data Logging" collapse into the same key and are
+    # falsely reported as conflicting values.
+    (re.compile(r"\b(?:normal\s+operation|operasi\s+normal)\b", re.I), "power_draw_normal_operation", "Konsumsi daya operasi normal"),
+    (re.compile(r"\b(?:data\s*(?:save|logging)|penyimpanan\s+data)\b", re.I), "power_draw_data_logging", "Konsumsi daya saat pencatatan data"),
+    (re.compile(r"\b(?:power\s+consumption|power\s+current|arus\s+daya|konsumsi\s+daya)\b", re.I), "power_draw", "Konsumsi daya"),
+    (re.compile(r"\b(?:accessories?\s+included|included\s+accessories?|aksesori\s+yang\s+disertakan)\b", re.I), "accessories_included", "Aksesori yang disertakan"),
+    (re.compile(r"\b(?:standard\s+accessories?|aksesori\s+standar)\b", re.I), "accessories_standard", "Aksesori standar"),
+    (re.compile(r"\b(?:optional\s+accessories?|aksesori\s+opsional)\b", re.I), "accessories_optional", "Aksesori opsional"),
+    (re.compile(r"\b(?:data\s+output|output|interface|communication|communication\s+interface|keluaran\s+data|antarmuka)\b", re.I), "interface_output", "Antarmuka dan keluaran data"),
+    (re.compile(r"\b(?:display\s+direction|arah\s+tampilan)\b", re.I), "display_direction", "Arah tampilan"),
+    (re.compile(r"\b(?:display|tampilan|lcd)\b", re.I), "display", "Tampilan"),
+    (re.compile(r"\b(?:memory\s+card|sd\s*card|kartu\s+memori)\b", re.I), "memory_card", "Kartu memori"),
+    (re.compile(r"\b(?:operating\s+humidity|humidity|kelembapan|kelembaban)\b", re.I), "humidity", "Kelembapan"),
+    (re.compile(r"\b(?:temperature|suhu)\b", re.I), "temperature", "Suhu"),
+]
+
+
+def _canonical_label_info(row: Dict[str, Any]) -> Tuple[str, str, str]:
+    source_label = clean_text(row.get("source_label") or row.get("label"))
+    display_label = clean_text(row.get("label"))
+    probe = " ".join(x for x in (source_label, display_label) if x)
+    for pattern, key, label in _CANONICAL_LABEL_RULES:
+        if pattern.search(probe):
+            return key, label, source_label
+    # Preserve an unknown but valid field rather than forcing a wrong category.
+    fallback_label = normalize_label(display_label or source_label) or "Rincian teknis"
+    fallback_key = "other:" + _spec_text_key(source_label or fallback_label)[:80]
+    return fallback_key, fallback_label, source_label
+
+
+def _dimension_like(value: Any) -> bool:
+    return bool(re.search(r"\b\d+(?:[.,]\d+)?\s*[x×]\s*\d+(?:[.,]\d+)?(?:\s*[x×]\s*\d+(?:[.,]\d+)?)?\s*(?:mm|cm|m|inch|in\.?)(?:\b|\s)", clean_text(value), re.I))
+
+
+def _weight_like(value: Any) -> bool:
+    return bool(re.search(r"\b\d+(?:[.,]\d+)?\s*(?:mg|g|kg|lb|lbs|gram)\b", clean_text(value), re.I))
+
+
+def _humidity_like(value: Any) -> bool:
+    return bool(re.search(r"\b(?:less\s+than|under|below|kurang\s+dari|≤|<)?\s*\d+(?:[.,]\d+)?\s*%\s*(?:r\.?h\.?)?\b", clean_text(value), re.I))
+
+
+def _temperature_like(value: Any) -> bool:
+    return bool(re.search(r"[-+]?\d+(?:[.,]\d+)?\s*°?\s*(?:c|f|℃|℉)\b", clean_text(value), re.I))
+
+
+def _power_like(value: Any) -> bool:
+    text = clean_text(value)
+    return bool(re.search(r"\b(?:dc|ac)\s*\d|\b\d+(?:[.,]\d+)?\s*(?:v|volt|ma|a|w|watt)\b|\b(?:adapter|adaptor)\b", text, re.I))
+
+
+def _accessory_like(value: Any) -> bool:
+    # Battery wording appears in normal weight/power statements, so it is not
+    # enough evidence by itself to classify a value as an accessory list.
+    return bool(re.search(r"\b(?:manual|book|buku|cable|kabel|case|tas|software|clip|holder|stand|tip|penetrometer|electrode|electroda)\b", clean_text(value), re.I))
+
+
+def _value_has_multiple_field_signatures(value: Any) -> List[str]:
+    found = []
+    if _dimension_like(value):
+        found.append("dimensions")
+    if _weight_like(value):
+        found.append("weight")
+    if _humidity_like(value):
+        found.append("humidity")
+    if _temperature_like(value):
+        found.append("temperature")
+    if _power_like(value):
+        found.append("power")
+    if _accessory_like(value):
+        found.append("accessories")
+    return found
+
+
+def _dedupe_value_fragments(value: Any) -> str:
+    """Remove repeated identical clauses inside a single scraped value.
+
+    It only removes an exact cosmetic duplicate. It never performs a unit
+    conversion or drops a clause that contains different numbers.
+    """
+    raw = clean_spec_value(value)
+    if not raw:
+        return ""
+    # Normalise a repeated complete half: "A / B / A / B" -> "A / B".
+    parts = [clean_spec_value(p) for p in re.split(r"\s*/\s*", raw) if clean_spec_value(p)]
+    if len(parts) >= 4 and len(parts) % 2 == 0:
+        half = len(parts) // 2
+        if all(_spec_values_equivalent(parts[i], parts[i + half]) for i in range(half)):
+            parts = parts[:half]
+    # Drop exact duplicated slash clauses while keeping the first occurrence.
+    deduped: List[str] = []
     seen = set()
-    for row in rows:
-        label = normalize_label(row.get("label", ""))
-        value = clean_spec_value(row.get("value", ""))
-        if not label or not value or label.casefold() == value.casefold():
+    for part in parts:
+        key = _spec_text_key(part)
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(part)
+    if len(deduped) >= 2:
+        return " / ".join(deduped)
+    return raw
+
+
+def _canonical_base_key(key: str) -> str:
+    if key.startswith("dimensions_"):
+        return "dimensions"
+    if key.startswith("weight_"):
+        return "weight"
+    if key in {"humidity", "operating_humidity"}:
+        return "humidity"
+    if key in {"temperature", "operating_temperature"}:
+        return "temperature"
+    return key
+
+
+def _canonical_keys_can_compare(left: str, right: str) -> bool:
+    return left == right or _canonical_base_key(left) == _canonical_base_key(right)
+
+
+def _specificity_score(key: str, source_label: str, section: str) -> Tuple[int, int, int]:
+    """Rank duplicate facts while preserving the user's source priority.
+
+    When Technical Specifications and Specifications contain the same fact,
+    Technical Specifications must be kept. A regular Specifications table is
+    used only when the technical section has no equivalent fact.
+    """
+    component = int(key.startswith("dimensions_") or key.startswith("weight_"))
+    section_text = clean_text(section)
+    if _is_technical_spec_section(section_text):
+        source = 3
+    elif re.search(r"(?:structured|datasheet|specifications)", section_text, re.I):
+        source = 2
+    else:
+        source = 1
+    label = min(80, len(clean_text(source_label)))
+    return (component, source, label)
+
+
+def _issue(code: str, row: Dict[str, Any], detail: str, severity: str = "warning") -> Dict[str, str]:
+    """Create a review record with an explicit severity.
+
+    Cross-section wording differences are normal on Lutron pages. They should
+    be visible for audit, but they must not suppress the entire catalog. Only a
+    strong label/value mismatch is a publication blocker.
+    """
+    return {
+        "Issue Code": code,
+        "Severity": severity,
+        "Detail": detail,
+        "Canonical Key": clean_text(row.get("canonical_key")),
+        "Display Label": clean_text(row.get("label")),
+        "Source Label": clean_text(row.get("source_label")),
+        "Value": clean_text(row.get("value")),
+        "Source Section": clean_text(row.get("section")),
+    }
+
+
+def _is_blocking_spec_issue(issue: Dict[str, Any]) -> bool:
+    """Return True only for evidence that a label is paired to the wrong value.
+
+    A value conflict between Technical Specifications and Specifications may
+    be a valid distinction such as meter versus probe data, or a manufacturer
+    wording difference. It stays as a warning, while obvious cases such as an
+    accessory label containing only dimensions are blocked.
+    """
+    if not isinstance(issue, dict):
+        return False
+    return clean_text(issue.get("Severity")).casefold() == "blocker" or (
+        clean_text(issue.get("Issue Code")) == "label_value_mismatch"
+    )
+
+
+def _validate_canonical_row(row: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Flag only strong label/value mismatches. Unknown fields are allowed."""
+    key = clean_text(row.get("canonical_key"))
+    value = clean_text(row.get("value"))
+    issues: List[Dict[str, str]] = []
+    if not value:
+        issues.append(_issue("empty_specification_value", row, "Nilai spesifikasi kosong.", severity="warning"))
+        return issues
+    signatures = _value_has_multiple_field_signatures(value)
+    expected = {
+        "dimensions": "dimensions", "dimensions_main_unit": "dimensions", "dimensions_meter": "dimensions", "dimensions_probe": "dimensions",
+        "weight": "weight", "weight_meter": "weight", "weight_probe": "weight",
+        "operating_humidity": "humidity", "operating_temperature": "temperature",
+        "power_supply": "power", "power_draw": "power", "power_draw_normal_operation": "power", "power_draw_data_logging": "power",
+        "accessories_included": "accessories", "accessories_standard": "accessories", "accessories_optional": "accessories",
+    }.get(key)
+    strong_pattern = {
+        "dimensions": _dimension_like,
+        "weight": _weight_like,
+        "humidity": _humidity_like,
+        "temperature": _temperature_like,
+        "power": _power_like,
+        "accessories": _accessory_like,
+    }
+    if expected and expected in strong_pattern and not strong_pattern[expected](value):
+        # Do not flag generic free-text facts. Only obvious wrong pairings are
+        # review-worthy. E.g. accessories label carrying a dimension value.
+        other = [x for x in signatures if x != expected]
+        if other:
+            issues.append(_issue("label_value_mismatch", row, f"Label mengarah ke {expected}, tetapi nilai terlihat seperti {', '.join(other)}.", severity="blocker"))
+    if expected and expected != "accessories" and len(signatures) >= 2 and expected in signatures:
+        # Accessories routinely include cables, adapters, and memory cards.
+        # Those are not mixed fields. For technical labels, retain only strong
+        # incompatible signals such as humidity attached to a power entry.
+        incompatible = [x for x in signatures if x != expected]
+        if incompatible:
+            issues.append(_issue("mixed_specification_fields", row, f"Satu nilai memuat beberapa jenis data: {', '.join(signatures)}.", severity="warning"))
+    return issues
+
+
+def _row_display_label(canonical_key: str, default_label: str, source_label: str) -> str:
+    for _pat, key, label in _CANONICAL_LABEL_RULES:
+        if key == canonical_key:
+            return label
+    # Source-specific labels such as "6 GHz" or "Pt 100 ohm" must stay
+    # recognisable rather than becoming a generic field name.
+    return normalize_label(default_label or source_label) or "Rincian teknis"
+
+
+def canonicalize_specifications(rows: Sequence[Dict[str, Any]]) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    """Hapus spesifikasi yang benar-benar sama, lalu simpan salah satu saja.
+
+    Prinsip v16 sengaja sederhana:
+    - Technical Specifications dan Specifications boleh sama-sama dibaca.
+    - Bila fakta yang sama muncul dua kali dengan nilai yang sama atau hanya
+      berbeda format kecil, simpan satu baris.
+    - Bila nilai berbeda, jangan dihapus dan jangan dipindahkan ke review.
+      Nilai berbeda bisa memang mewakili probe, meter, kanal, atau rentang lain.
+    - Tidak ada aturan yang menahan produk hanya karena spesifikasi.
+    """
+    prepared: List[Dict[str, Any]] = []
+    for idx, raw in enumerate(rows or []):
+        if not isinstance(raw, dict):
             continue
-        key = (label.casefold(), value.casefold())
-        if key in seen:
+        value = _dedupe_value_fragments(raw.get("value", ""))
+        if not value:
             continue
-        seen.add(key)
-        out.append({"label": label, "value": value, "section": clean_text(row.get("section")) or "Spesifikasi"})
-    return out
+        key, standard_label, source_label = _canonical_label_info(raw)
+        label = _row_display_label(key, clean_text(raw.get("label")) or standard_label, source_label)
+        section = clean_text(raw.get("section")) or "Specifications"
+        if _spec_text_key(label) == _spec_text_key(value):
+            continue
+        prepared.append({
+            "label": label,
+            "value": value,
+            "section": section,
+            "source_label": source_label or label,
+            "canonical_key": key,
+            "_index": idx,
+        })
+
+    # Pertahankan urutan sumber. Model tetap ditampilkan pertama.
+    prepared.sort(key=lambda r: (0 if r["canonical_key"] == "model" else 1, r["_index"]))
+    accepted: List[Dict[str, Any]] = []
+
+    for row in prepared:
+        duplicate_index: Optional[int] = None
+        for pos, existing in enumerate(accepted):
+            if not _canonical_keys_can_compare(
+                clean_text(existing.get("canonical_key")), row["canonical_key"]
+            ):
+                continue
+            if _spec_values_equivalent(existing.get("value"), row.get("value")):
+                duplicate_index = pos
+                break
+
+        if duplicate_index is None:
+            accepted.append(row)
+            continue
+
+        # Jika dua baris memang sama, pakai versi label yang lebih spesifik.
+        old = accepted[duplicate_index]
+        old_score = _specificity_score(
+            clean_text(old.get("canonical_key")),
+            clean_text(old.get("source_label")),
+            clean_text(old.get("section")),
+        )
+        new_score = _specificity_score(
+            row["canonical_key"], row["source_label"], row["section"]
+        )
+        if new_score > old_score or (
+            new_score == old_score and len(row["value"]) > len(clean_text(old.get("value")))
+        ):
+            accepted[duplicate_index] = row
+
+    output: List[Dict[str, str]] = []
+    for row in accepted:
+        output.append({
+            "label": clean_text(row.get("label")),
+            "value": clean_text(row.get("value")),
+            "section": clean_text(row.get("section")),
+            "source_label": clean_text(row.get("source_label")),
+            "canonical_key": clean_text(row.get("canonical_key")),
+        })
+    return output, []
+
+
+def dedupe_specs(rows: Sequence[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Compatibility wrapper used across scraping, fallback, and AI output."""
+    cleaned, _issues = canonicalize_specifications(rows)
+    return cleaned
+
+
+
+def _technical_heading_exact(value: Any) -> bool:
+    text = clean_text(value).strip(" :–—|-")
+    return bool(re.fullmatch(r"(?:technical\s+specifications?|technical\s+data|measurement\s+specifications?)", text, re.I))
 
 
 def extract_specs(soup: BeautifulSoup, root: Tag, content_items: Sequence[Tuple[str, str, str]], fallback_model: str = "") -> List[Dict[str, str]]:
-    rows: List[Dict[str, str]] = []
+    """Extract raw facts, then canonicalise them once.
 
-    # 1) JSON-LD additionalProperty offers the cleanest key-value source when present.
+    Tables and definition lists are treated as structured facts. Narrative
+    technical content is read only under an exact technical heading. This stops
+    the ordinary Specifications table from being parsed a second time.
+    """
+    raw_rows: List[Dict[str, str]] = []
+
     for obj in product_jsonld(soup):
         props = obj.get("additionalProperty", [])
         if isinstance(props, dict):
             props = [props]
         for prop in props if isinstance(props, list) else []:
-            if not isinstance(prop, dict):
-                continue
-            label = clean_text(prop.get("name"))
-            value = clean_text(prop.get("value") or prop.get("description"))
-            if label and value:
-                rows.append({"label": label, "value": value, "section": "Product structured data"})
+            if isinstance(prop, dict):
+                label = clean_text(prop.get("name"))
+                value = clean_text(prop.get("value") or prop.get("description"))
+                if label and value:
+                    raw_rows.append({"label": label, "source_label": label, "value": value, "section": "Product structured data"})
         sku = clean_text(obj.get("sku") or obj.get("mpn"))
         if sku:
-            rows.append({"label": "Model / SKU", "value": sku, "section": "Product structured data"})
+            raw_rows.append({"label": "Model / SKU", "source_label": "Model / SKU", "value": sku, "section": "Product structured data"})
 
-    # 2) Table rows frequently contain complete specifications on Lutron pages.
     for table in root.find_all("table"):
-        heading = "Spesifikasi"
-        prev = table.find_previous(["h2", "h3", "h4"])
-        if prev:
-            heading = soup_text(prev) or heading
+        heading = "Specifications"
+        previous = table.find_previous(["h1", "h2", "h3", "h4", "h5", "h6"])
+        if previous:
+            heading = soup_text(previous) or heading
         for tr in table.find_all("tr"):
             cells = [clean_spec_value(soup_text(c)) for c in tr.find_all(["th", "td"], recursive=False)]
             cells = [c for c in cells if c]
             if len(cells) >= 2 and looks_like_spec_label(cells[0]):
-                rows.append({"label": cells[0], "value": " / ".join(cells[1:]), "section": heading})
+                raw_rows.append({"label": cells[0], "source_label": cells[0], "value": " / ".join(cells[1:]), "section": heading})
 
-    # 3) Definition lists.
     for dl in root.find_all("dl"):
-        heading = soup_text(dl.find_previous(["h2", "h3", "h4"])) or "Spesifikasi"
-        dts = dl.find_all("dt")
-        for dt in dts:
+        heading_node = dl.find_previous(["h1", "h2", "h3", "h4", "h5", "h6"])
+        heading = soup_text(heading_node) or "Specifications"
+        for dt in dl.find_all("dt"):
             dd = dt.find_next_sibling("dd")
             label, value = soup_text(dt), soup_text(dd)
             if label and value and looks_like_spec_label(label):
-                rows.append({"label": label, "value": value, "section": heading})
+                raw_rows.append({"label": label, "source_label": label, "value": value, "section": heading})
 
-    # 4) Text content under labelled specification headings and key:value terms.
-    spec_mode = False
-    last_label = ""
-    for kind, heading, text in content_items:
-        heading_is_spec = bool(SPEC_HEADING_RE.search(heading))
-        if heading_is_spec:
-            spec_mode = True
-        elif heading and not heading_is_spec:
-            # Keep spec_mode hanya selama elemen masih berada pada bagian spesifikasi.
-            spec_mode = False
-            last_label = ""
-        if not spec_mode:
+    active = False
+    pending_label = ""
+    pending_values: List[str] = []
+
+    def flush_pending() -> None:
+        nonlocal pending_label, pending_values
+        if pending_label and pending_values:
+            raw_rows.append({
+                "label": pending_label,
+                "source_label": pending_label,
+                "value": " / ".join(dedupe_keep_order(pending_values)),
+                "section": "Technical Specifications",
+            })
+        pending_label, pending_values = "", []
+
+    for _kind, heading, text in content_items:
+        if _technical_heading_exact(heading):
+            active = True
+        elif active and clean_text(heading).strip() and not _technical_heading_exact(heading):
+            flush_pending()
+            active = False
+        if not active:
             continue
-        text = clean_spec_value(text)
-        if not text:
+        raw_line = normalize_content_line(text).lstrip("-•* ").strip()
+        if not raw_line:
             continue
-        if ":" in text:
-            label, value = text.split(":", 1)
-            if looks_like_spec_label(label) and clean_spec_value(value):
-                rows.append({"label": label, "value": value, "section": heading})
-                last_label = label
+        if raw_line.endswith(":") and looks_like_spec_label(raw_line[:-1]):
+            flush_pending()
+            pending_label = clean_spec_value(raw_line[:-1])
+            continue
+        if ":" in raw_line:
+            label, value = raw_line.split(":", 1)
+            label, value = clean_spec_value(label), clean_spec_value(value)
+            if looks_like_spec_label(label) and value:
+                flush_pending()
+                raw_rows.append({"label": label, "source_label": label, "value": value, "section": "Technical Specifications"})
                 continue
-        # Some layouts render label and value as sequential lines.
-        if looks_like_spec_label(text) and len(text) <= 80:
-            last_label = text
-        elif last_label and len(text) <= 500:
-            rows.append({"label": last_label, "value": text, "section": heading})
-            last_label = ""
+        if pending_label:
+            pending_values.append(clean_spec_value(raw_line))
+        # Unlabelled technical lines are intentionally not assigned to a guessed
+        # label. They remain in full official content, but should not become a
+        # potentially wrong key/value specification row.
+    flush_pending()
 
     model = clean_text(fallback_model)
     if model:
-        rows.insert(0, {"label": "Model", "value": model, "section": "Input Excel"})
-    return dedupe_specs(rows)
+        raw_rows.insert(0, {"label": "Model", "source_label": "Model", "value": model, "section": "Input Excel"})
+
+    # Keep raw source rows here. The canonical pipeline runs in main() after
+    # all scrape/fallback sources are combined, so conflicts remain detectable
+    # and can be sent to Review Spesifikasi instead of being silently dropped.
+    return raw_rows
 
 
 def extract_model(title: str, specs: Sequence[Dict[str, str]], fallback: str = "") -> str:
@@ -1470,8 +1934,7 @@ def scrape_product_page(record: Dict[str, str], timeout: int, session: requests.
         specs = extract_specs(soup, root, content_items, record.get("input_model", ""))
         model = extract_model(title, specs, record.get("input_model", ""))
         if model and not any(re.search(r"\bmodel\b", row.get("label", ""), re.I) and clean_text(row.get("value")) == model for row in specs):
-            specs.insert(0, {"label": "Model", "value": model, "section": "Product page"})
-            specs = dedupe_specs(specs)
+            specs.insert(0, {"label": "Model", "source_label": "Model", "value": model, "section": "Product page"})
         image = "" if is_landing else extract_best_image_url(
             soup, base_url, model=model or record.get("input_model", ""), network_images=network_images
         )
@@ -1752,7 +2215,7 @@ def _find_labeled_pdf_specs(pdf_text: str, model: str) -> List[Dict[str, str]]:
                 rows.append({"label": "Technical detail", "value": line, "section": "Model-specific datasheet"})
                 if len(rows) >= 12:
                     break
-    return dedupe_specs(rows)
+    return rows
 
 
 def _pdf_feature_description(pdf_text: str, max_chars: int = 1400) -> str:
@@ -2150,11 +2613,9 @@ def _temperature_conversion_consistent(value: Any) -> bool:
 
 def collect_source_quality_flags(data: Dict[str, Any]) -> List[str]:
     flags: List[str] = []
-    for row in data.get("spec_rows") if isinstance(data.get("spec_rows"), list) else []:
-        label = clean_text(row.get("label"))
-        value = clean_text(row.get("value"))
-        if re.search(r"temperature|suhu", label, re.I) and not _temperature_conversion_consistent(value):
-            flags.append("temperature_conversion_review_required")
+    # Do not use a global Celsius/Fahrenheit pairing heuristic as a publication
+    # blocker. Lutron pages can repeat, reorder, or separately format ranges.
+    # The translated spec validator preserves every numeric source token instead.
     image = clean_text(data.get("image_url"))
     if image and not valid_image_url(image):
         flags.append("rejected_generic_image")
@@ -2414,12 +2875,12 @@ def build_faq(data: Dict[str, Any], family: Dict[str, Any]) -> str:
 def build_meta_description(data: Dict[str, Any], family: Dict[str, Any]) -> str:
     title, brand = clean_text(data.get("title")), clean_text(data.get("brand"))
     if data.get("is_accessory"):
-        return compact(f"{title} adalah aksesori atau komponen {brand}. Periksa kompatibilitas model dan spesifikasinya di uji.co.id.", 155)
+        return compact(f"{title} adalah aksesori atau komponen {brand}. Periksa kompatibilitas model dan spesifikasinya di nama-website-kalian.", 155)
     range_value = spec_value(data.get("spec_rows") or [], ["range", "measurement range"])
     text = f"{title} dari {brand} untuk {family['function']}."
     if range_value:
         text += f" Rentang: {range_value}."
-    text += " Cek spesifikasi di uji.co.id."
+    text += " Cek spesifikasi di nama-website-kalian."
     return compact(text, 155)
 
 
@@ -2442,7 +2903,7 @@ AI_SETTINGS: Dict[str, Any] = {
     "spec_limit": 120,
 }
 AI_STATS: Dict[str, int] = {"used": 0, "cache_hit": 0, "fallback": 0, "skipped": 0}
-AI_PROMPT_VERSION = "lutron_uji_deepseek_indonesian_v2_2026_06_22"
+AI_PROMPT_VERSION = "lutron_uji_deepseek_indonesian_v18_ai_semantic_spec_dedup_2026_06_29"
 
 # Fallback hanya untuk label. Dalam mode AI bersih, nilai spesifikasi
 # diterjemahkan oleh DeepSeek agar tidak ada teks Inggris/Chinese yang masuk.
@@ -2542,14 +3003,30 @@ def _parse_json(text: str) -> Dict[str, Any]:
 
 
 def _spec_rows_for_ai(data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    rows = data.get("spec_rows") if isinstance(data.get("spec_rows"), list) else []
+    """Send DeepSeek the untouched source rows, including both spec sections.
+
+    `prepare_canonical_specs_for_product()` creates `_raw_spec_rows` before it
+    applies fallback rules. AI must inspect that raw list, otherwise it cannot
+    identify duplicates that the rule-based parser did not recognise.
+    """
+    raw_rows = data.get("_raw_spec_rows")
+    rows = raw_rows if isinstance(raw_rows, list) else (
+        data.get("spec_rows") if isinstance(data.get("spec_rows"), list) else []
+    )
     limit = int(AI_SETTINGS.get("spec_limit") or 120)
     clean_rows: List[Dict[str, Any]] = []
     for index, item in enumerate(rows[:limit], 1):
-        label = clean_catalog_source_text(item.get("label"))
+        if not isinstance(item, dict):
+            continue
+        source_label = clean_catalog_source_text(item.get("source_label") or item.get("label"))
         value = clean_catalog_source_text(item.get("value"))
-        if label and value:
-            clean_rows.append({"id": index, "source_label": label, "source_value": compact(value, 700)})
+        if source_label and value:
+            clean_rows.append({
+                "id": index,
+                "source_label": source_label,
+                "source_value": compact(value, 700),
+                "section": clean_text(item.get("section")) or "Specifications",
+            })
     return clean_rows
 
 
@@ -2584,36 +3061,199 @@ def _numeric_tokens(value: Any) -> List[str]:
     return re.findall(r"(?<![A-Za-z])[-+]?\d+(?:[.,]\d+)?", clean_text(value))
 
 
-def _validate_translated_specs(parsed: Dict[str, Any], source_specs: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+def _localize_source_label(source_label: Any, localized_label: Any) -> str:
+    """Return a safe Indonesian display label without changing source identity.
+
+    The original v16 called this helper from both the AI and fallback paths,
+    but the function was missing. That NameError made every AI-enabled product
+    fail validation and enter the Skipped sheet.
+    """
+    localized = clean_catalog_source_text(localized_label)
+    source = clean_catalog_source_text(source_label)
+    return normalize_label(localized or source)
+
+
+def _coerce_ai_spec_id(value: Any) -> Optional[int]:
+    try:
+        parsed = int(str(value).strip())
+        return parsed if parsed > 0 else None
+    except Exception:
+        return None
+
+
+def _validate_all_translated_specs(
+    parsed: Dict[str, Any],
+    source_specs: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], Dict[int, Dict[str, Any]]]:
+    """Validate translation row-by-row before applying AI duplicate selection."""
     raw_items = parsed.get("translated_specifications")
     if not isinstance(raw_items, list) or not source_specs:
-        return []
-    by_id: Dict[int, Dict[str, Any]] = {}
+        return [], {}
+
+    translated_by_id: Dict[int, Dict[str, Any]] = {}
     for item in raw_items:
         if not isinstance(item, dict):
             continue
-        try:
-            item_id = int(item.get("id"))
-        except Exception:
-            continue
-        by_id[item_id] = item
+        item_id = _coerce_ai_spec_id(item.get("id"))
+        if item_id is not None:
+            translated_by_id[item_id] = item
 
-    translated: List[Dict[str, str]] = []
+    expected_ids = [int(spec["id"]) for spec in source_specs]
+    if set(translated_by_id) != set(expected_ids):
+        return [], {}
+
+    translated_rows: List[Dict[str, Any]] = []
+    mapped: Dict[int, Dict[str, Any]] = {}
     for spec in source_specs:
-        item = by_id.get(int(spec["id"]))
+        source_id = int(spec["id"])
+        item = translated_by_id.get(source_id)
         if not item:
-            return []
+            return [], {}
         label = clean_catalog_source_text(item.get("label_id"))
         value = clean_catalog_source_text(item.get("value_id"))
         if not label or not value or has_cjk(label) or has_cjk(value):
-            return []
-        # Angka dari spesifikasi tidak boleh hilang atau diubah dalam proses terjemahan.
-        # Tanda desimal titik/koma diperlakukan ekuivalen untuk penulisan Indonesia.
+            return [], {}
         normalized_value = value.replace(",", ".")
         if any(token.replace(",", ".") not in normalized_value for token in _numeric_tokens(spec["source_value"])):
-            return []
-        translated.append({"label": label, "value": value})
-    return translated
+            return [], {}
+        translated = {
+            "id": source_id,
+            "label": _localize_source_label(spec.get("source_label"), label),
+            "source_label": clean_text(spec.get("source_label")),
+            "value": value,
+            "section": clean_text(spec.get("section")) or "Specifications",
+        }
+        translated_rows.append(translated)
+        mapped[source_id] = translated
+    return translated_rows, mapped
+
+
+def _source_label_duplicate_family(left: Dict[str, Any], right: Dict[str, Any]) -> bool:
+    """Reject unsafe AI removals where labels clearly represent different facts."""
+    left_key, _left_std, left_source = _canonical_label_info({
+        "source_label": left.get("source_label"),
+        "label": left.get("source_label"),
+    })
+    right_key, _right_std, right_source = _canonical_label_info({
+        "source_label": right.get("source_label"),
+        "label": right.get("source_label"),
+    })
+    if _canonical_keys_can_compare(left_key, right_key):
+        return True
+    a, b = _spec_text_key(left_source), _spec_text_key(right_source)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return SequenceMatcher(None, a, b).ratio() >= 0.92
+
+
+def _source_values_plausibly_identical(left: Dict[str, Any], right: Dict[str, Any]) -> bool:
+    """Allow AI to merge only cosmetic variants of the same source fact.
+
+    This guard keeps AI from deleting valid values such as Meter versus Probe
+    dimensions, multiple frequency ranges, or different operating modes.
+    """
+    a = clean_text(left.get("source_value"))
+    b = clean_text(right.get("source_value"))
+    if _spec_values_equivalent(a, b):
+        return True
+
+    a_numbers = [v.replace(",", ".") for v in _numeric_tokens(a)]
+    b_numbers = [v.replace(",", ".") for v in _numeric_tokens(b)]
+    if a_numbers != b_numbers:
+        return False
+
+    # Values with numerical data may differ only in punctuation, spacing, or
+    # equivalent wording such as "to", "-", and "hingga".
+    if a_numbers:
+        a_units = _spec_unit_signature(a)
+        b_units = _spec_unit_signature(b)
+        if a_units and b_units and a_units != b_units:
+            return False
+        return True
+
+    a_key, b_key = _spec_text_key(a), _spec_text_key(b)
+    if not a_key or not b_key:
+        return False
+    if a_key == b_key or a_key in b_key or b_key in a_key:
+        return True
+    return SequenceMatcher(None, a_key, b_key).ratio() >= 0.88
+
+
+def _validate_ai_spec_deduplication(
+    parsed: Dict[str, Any],
+    source_specs: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, str]], int]:
+    """Use DeepSeek's keep/remove decision after conservative source checks."""
+    translated_rows, translations = _validate_all_translated_specs(parsed, source_specs)
+    if not translated_rows:
+        return [], 0
+
+    raw_keep_ids = parsed.get("keep_specification_ids")
+    raw_removed = parsed.get("removed_duplicate_specifications")
+    if not isinstance(raw_keep_ids, list) or not isinstance(raw_removed, list):
+        return [], 0
+
+    expected_ids = {int(spec["id"]) for spec in source_specs}
+    keep_ids = [_coerce_ai_spec_id(value) for value in raw_keep_ids]
+    if any(value is None for value in keep_ids):
+        return [], 0
+    keep_ids = [int(value) for value in keep_ids if value is not None]
+    if len(keep_ids) != len(set(keep_ids)) or not set(keep_ids).issubset(expected_ids):
+        return [], 0
+
+    removed_map: Dict[int, int] = {}
+    for item in raw_removed:
+        if not isinstance(item, dict):
+            return [], 0
+        source_id = _coerce_ai_spec_id(item.get("source_id", item.get("id")))
+        duplicate_of_id = _coerce_ai_spec_id(item.get("duplicate_of_id", item.get("keep_id")))
+        if source_id is None or duplicate_of_id is None or source_id == duplicate_of_id:
+            return [], 0
+        if source_id in removed_map:
+            return [], 0
+        removed_map[source_id] = duplicate_of_id
+
+    removed_ids = set(removed_map)
+    if not removed_ids.issubset(expected_ids):
+        return [], 0
+    if not set(removed_map.values()).issubset(set(keep_ids)):
+        return [], 0
+    if set(keep_ids) & removed_ids:
+        return [], 0
+    # Every source row must be accounted for. This prevents AI from silently
+    # losing a unique specification while it selects duplicates.
+    if set(keep_ids) | removed_ids != expected_ids:
+        return [], 0
+
+    source_by_id = {int(item["id"]): item for item in source_specs}
+    for source_id, target_id in removed_map.items():
+        source_row = source_by_id[source_id]
+        target_row = source_by_id[target_id]
+        if not _source_label_duplicate_family(source_row, target_row):
+            return [], 0
+        if not _source_values_plausibly_identical(source_row, target_row):
+            return [], 0
+
+        # If the source sections are a direct Technical-vs-Specifications pair,
+        # Technical Specifications may never be removed in favor of the generic
+        # Specifications section.
+        source_is_technical = _is_technical_spec_section(source_row.get("section"))
+        target_is_technical = _is_technical_spec_section(target_row.get("section"))
+        if source_is_technical and not target_is_technical:
+            return [], 0
+
+    output: List[Dict[str, str]] = []
+    for source_id in keep_ids:
+        row = translations[source_id]
+        output.append({
+            "label": clean_text(row.get("label")),
+            "source_label": clean_text(row.get("source_label")),
+            "value": clean_text(row.get("value")),
+            "section": clean_text(row.get("section")),
+        })
+    return output, len(removed_ids)
 
 
 def _validate_ai_fields(parsed: Dict[str, Any], source_specs: List[Dict[str, Any]]) -> Tuple[bool, Dict[str, Any], str]:
@@ -2627,7 +3267,10 @@ def _validate_ai_fields(parsed: Dict[str, Any], source_specs: List[Dict[str, Any
         "meta_description": _sanitize_ai_text(parsed.get("meta_description"), 158),
         "official_information_html": _sanitize_ai_html(parsed.get("official_information_html")),
     }
-    fields["translated_spec_rows"] = _validate_translated_specs(parsed, source_specs)
+    translated_rows, removed_count = _validate_ai_spec_deduplication(parsed, source_specs)
+    fields["translated_spec_rows"] = translated_rows
+    fields["ai_spec_dedup_applied"] = bool(source_specs)
+    fields["ai_spec_dedup_removed_count"] = removed_count
 
     required_text = [
         fields["product_name_id"],
@@ -2648,17 +3291,15 @@ def _validate_ai_fields(parsed: Dict[str, Any], source_specs: List[Dict[str, Any
         return False, {}, "invalid_official_information"
     if "<li" not in fields["feature_tab_html"].lower() or "<h3" not in fields["faq_html"].lower():
         return False, {}, "invalid_ai_tabs"
-    if source_specs and len(fields["translated_spec_rows"]) != len(source_specs):
-        return False, {}, "incomplete_specification_translation"
-    forbidden = re.compile(r"\b(harga|diskon|promo|garansi resmi|ready stock|stok tersedia|gratis ongkir|termurah)\b", re.I)
+    if source_specs and not fields["translated_spec_rows"]:
+        return False, {}, "invalid_ai_specification_deduplication"
+    forbidden = re.compile(r"(harga|diskon|promo|garansi resmi|ready stock|stok tersedia|gratis ongkir|termurah)", re.I)
     all_public_text = " ".join(str(x) for x in required_text)
     if forbidden.search(all_public_text):
         return False, {}, "forbidden_sales_claim"
-    unsafe_claim = re.compile(r"\b(prudent avoidance|epa|who|risiko kesehatan|risiko kanker|bahaya kesehatan|diagnosis medis)\b", re.I)
+    unsafe_claim = re.compile(r"(prudent avoidance|epa|who|risiko kesehatan|risiko kanker|bahaya kesehatan|diagnosis medis)", re.I)
     if unsafe_claim.search(all_public_text):
         return False, {}, "unsafe_health_or_regulatory_claim"
-    if not _temperature_conversion_consistent(all_public_text):
-        return False, {}, "invalid_temperature_conversion"
     return True, fields, "ok"
 
 
@@ -2674,7 +3315,12 @@ def _call_ai(payload: Dict[str, Any]) -> Tuple[bool, Dict[str, Any], str]:
             "Jangan tulis karakter Mandarin, Chinese, atau kutipan bahasa sumber.",
             "Pertahankan merek Lutron, model, kode, angka, satuan, lambang, serta singkatan teknis seperti LCD, True RMS, SD card, RS232, USB, dan IP apa adanya.",
             "Gunakan hanya fakta yang didukung data sumber. Jangan menambah klaim, harga, stok, garansi, sertifikasi, atau fitur.",
-            "Terjemahkan setiap source_label dan source_value dalam specifications. Jangan menghapus, mengganti, atau mengonversi angka maupun satuan.",
+            "Terjemahkan SETIAP source_label dan source_value dalam specifications. Jangan menghapus, mengganti, atau mengonversi angka maupun satuan.",
+            "Setelah menerjemahkan seluruh specifications, lakukan penyaringan duplikat SEMANTIK hanya untuk tab Spesifikasi.",
+            "Dua spesifikasi boleh dianggap duplikat hanya jika labelnya menyatakan fakta teknis yang sama DAN semua angka, satuan, rentang, komponen, mode, kanal, sensor/probe, serta kondisi pengujiannya sama. Perbedaan bahasa, kapitalisasi, spasi, tanda baca, atau kata 'to', '-', dan 'hingga' boleh dianggap kosmetik.",
+            "Jika fakta yang sama muncul pada Technical Specifications dan Specifications, WAJIB simpan ID dari Technical Specifications dan masukkan ID dari Specifications ke removed_duplicate_specifications.",
+            "Jangan menghapus dua baris hanya karena labelnya sama. Pertahankan keduanya jika nilai berbeda, misalnya Meter dan Probe, 1 GHz dan 6 GHz, rentang dan akurasi, operasi normal dan pencatatan data, atau ukuran komponen yang berbeda.",
+            "Jangan menggabungkan atau mengonversi nilai. Tampilkan nilai yang disimpan sesuai source_value terpilih, hanya diterjemahkan ke Bahasa Indonesia.",
             "Status product_type sudah ditentukan oleh validasi rule. Jangan mengubah status produk utama menjadi aksesori dan jangan menyebut kompatibilitas unit utama kecuali data sumber secara eksplisit menyatakan produk adalah aksesori atau komponen pengganti.",
             "Jangan membuat klaim kesehatan, risiko paparan, EPA, WHO, Prudent Avoidance, kanker, atau klaim keselamatan medis karena data sumber produk tidak digunakan untuk klaim tersebut.",
             "Jangan menyatakan USB atau RS-232 sebagai kelengkapan bawaan kecuali sumber menyebut included atau standard accessories. Bila sumber hanya menyebut interface atau optional accessory, gunakan kata mendukung atau opsional.",
@@ -2691,7 +3337,11 @@ def _call_ai(payload: Dict[str, Any]) -> Tuple[bool, Dict[str, Any], str]:
             "meta_description": "Maksimal 158 karakter, bahasa Indonesia.",
             "official_information_html": "HTML Indonesia berisi <h2>Informasi Produk</h2>, ringkasan faktual halaman/dokumen sumber, dan <h2>Catatan Teknis</h2>. Jangan menyalin teks sumber bahasa Inggris atau Chinese.",
             "translated_specifications": [
-                {"id": "Nomor id dari setiap specifications", "label_id": "Label spesifikasi Bahasa Indonesia", "value_id": "Nilai spesifikasi Bahasa Indonesia dengan angka/satuan persis dipertahankan"}
+                {"id": "ID setiap baris specifications dari input", "label_id": "Label spesifikasi Bahasa Indonesia", "value_id": "Nilai spesifikasi Bahasa Indonesia dengan angka/satuan persis dipertahankan"}
+            ],
+            "keep_specification_ids": ["Semua ID spesifikasi yang dipertahankan di tab Spesifikasi, urut mengikuti sumber. Jika tidak duplikat, ID tetap harus masuk daftar ini."],
+            "removed_duplicate_specifications": [
+                {"source_id": "ID yang dibuang karena benar-benar duplikat", "duplicate_of_id": "ID yang dipertahankan sebagai versi yang sama", "reason_id": "Alasan singkat Bahasa Indonesia, misalnya Duplikat identik. Tidak boleh menghapus fakta yang nilainya berbeda."}
             ],
         },
         "product_data": payload,
@@ -2702,9 +3352,10 @@ def _call_ai(payload: Dict[str, Any]) -> Tuple[bool, Dict[str, Any], str]:
             {
                 "role": "system",
                 "content": (
-                    "Anda adalah penerjemah teknis dan penulis katalog produk industri untuk uji.co.id. "
+                    "Anda adalah penerjemah teknis dan editor data spesifikasi untuk nama-website-kalian. "
                     "Tulis dalam bahasa Indonesia baku. Semua karakter Chinese dilarang. "
-                    "Jaga fakta teknis tetap akurat. Balas JSON valid saja."
+                    "Jaga fakta teknis tetap akurat. Terapkan deduplikasi spesifikasi sangat konservatif. "
+                    "Balas JSON valid saja."
                 ),
             },
             {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
@@ -2779,8 +3430,13 @@ def localize_spec_rows_fallback(rows: Sequence[Dict[str, str]]) -> List[Dict[str
             continue
         key = re.sub(r"\s+", " ", raw_label).casefold()
         label = SPEC_LABEL_ID_MAP.get(key, raw_label)
-        out.append({"label": label, "value": raw_value})
-    return out
+        out.append({
+            "label": _localize_source_label(row.get("source_label") or raw_label, label),
+            "source_label": clean_text(row.get("source_label")) or raw_label,
+            "value": raw_value,
+            "section": clean_text(row.get("section")) or "Specifications",
+        })
+    return dedupe_specs(out)
 
 
 def fallback_official_information(data: Dict[str, Any]) -> str:
@@ -2811,6 +3467,8 @@ def build_output_row(data: Dict[str, Any], pub_date: datetime) -> Dict[str, Any]
         # Category from deterministic family rules is authoritative. AI may
         # suggest a label but never overrides the validated product class.
         category_leaf = clean_text(family.get("category")).strip()
+        # DeepSeek has already selected the retained specification rows from
+        # the raw Technical Specifications + Specifications source list.
         specs_out = ai.get("translated_spec_rows") or localize_spec_rows_fallback(specs)
         desc = ai.get("product_description_html")
         short = ai.get("short_description")
@@ -2821,7 +3479,7 @@ def build_output_row(data: Dict[str, Any], pub_date: datetime) -> Dict[str, Any]
     else:
         title = clean_catalog_source_text(data.get("title"))
         category_leaf = clean_catalog_source_text(family.get("category")).replace("", "").strip()
-        specs_out = localize_spec_rows_fallback(specs)
+        specs_out, _output_spec_issues = canonicalize_specifications(localize_spec_rows_fallback(specs))
         desc = build_product_description(data, family)
         short = build_short_description(data, family)
         features = "<h2>Keunggulan Produk</h2><ul>" + "".join(f"<li>{esc(x)}</li>" for x in feature_bullets(data, family)) + "</ul>"
@@ -2861,7 +3519,11 @@ def build_output_row(data: Dict[str, Any], pub_date: datetime) -> Dict[str, Any]
     for flag in data.get("quality_flags") if isinstance(data.get("quality_flags"), list) else []:
         corrections.append("quality_flag=" + clean_text(flag))
     if AI_SETTINGS.get("enabled"):
-        corrections.append("deepseek_ai_indonesia_used" if ai else "deepseek_ai_fallback_" + clean_text(data.get("_ai_status", "unknown")))
+        if ai:
+            removed_count = int(ai.get("ai_spec_dedup_removed_count") or 0)
+            corrections.append("deepseek_ai_indonesia_spec_dedup_removed=" + str(removed_count))
+        else:
+            corrections.append("deepseek_ai_fallback_" + clean_text(data.get("_ai_status", "unknown")))
 
     row = {col: "" for col in OUTPUT_COLS}
     row.update({
@@ -2870,7 +3532,10 @@ def build_output_row(data: Dict[str, Any], pub_date: datetime) -> Dict[str, Any]
         "Product Description": desc,
         "Product Short Description": short,
         "custom_tab_1_title": "Spesifikasi",
-        "custom_tab_1_content": "<h2>Spesifikasi</h2>" + (table_html(specs_out) or "<p>Spesifikasi belum tersedia dalam bahasa Indonesia.</p>"),
+        "custom_tab_1_content": specifications_tab_html(
+            specs_out,
+            already_deduplicated=bool(ai and ai.get("ai_spec_dedup_applied")),
+        ),
         "custom_tab_1_priority": 10,
         "custom_tab_2_title": "Keunggulan Produk",
         "custom_tab_2_content": features,
@@ -2898,6 +3563,53 @@ def build_output_row(data: Dict[str, Any], pub_date: datetime) -> Dict[str, Any]
         "Website Correction Log": "; ".join(corrections) if corrections else "ok",
     })
     return row
+
+
+
+REVIEW_SPEC_COLUMNS = [
+    "URL", "Model", "Product", "Status", "Issue Code", "Severity", "Detail",
+    "Canonical Key", "Display Label", "Source Label", "Value", "Source Section",
+]
+
+
+def prepare_canonical_specs_for_product(data: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Canonicalise from immutable raw rows and attach review issues to data."""
+    raw = data.get("_raw_spec_rows")
+    if not isinstance(raw, list):
+        raw = data.get("spec_rows") if isinstance(data.get("spec_rows"), list) else []
+        data["_raw_spec_rows"] = [dict(item) for item in raw if isinstance(item, dict)]
+    canonical, issues = canonicalize_specifications(raw)
+    data["spec_rows"] = canonical
+    data["spec_review_issues"] = issues
+    return issues
+
+
+def build_spec_review_records(data: Dict[str, Any]) -> List[Dict[str, str]]:
+    rows: List[Dict[str, str]] = []
+    for issue in data.get("spec_review_issues") if isinstance(data.get("spec_review_issues"), list) else []:
+        if not isinstance(issue, dict):
+            continue
+        row = {col: "" for col in REVIEW_SPEC_COLUMNS}
+        row.update({
+            "URL": clean_text(data.get("url")),
+            "Model": clean_text(data.get("model")),
+            "Product": clean_text(data.get("title")),
+            "Status": clean_text(data.get("status")),
+        })
+        for col in REVIEW_SPEC_COLUMNS:
+            if col in issue:
+                row[col] = clean_text(issue.get(col))
+        rows.append(row)
+    return rows
+
+
+def _append_spec_review_log(data: Dict[str, Any]) -> None:
+    issues = data.get("spec_review_issues") if isinstance(data.get("spec_review_issues"), list) else []
+    if not issues:
+        return
+    codes = dedupe_keep_order(clean_text(item.get("Issue Code")) for item in issues if isinstance(item, dict))
+    if codes:
+        data["error"] = _merge_source_notes(data.get("error"), "spec_review=" + ",".join(codes))
 
 
 # ---------------------------------------------------------------------------
@@ -2960,18 +3672,26 @@ def style_output_xlsx(path: str, sheet_name: str = "UJI Products") -> None:
         pass
 
 
-def write_outputs(rows: Sequence[Dict[str, Any]], skipped: Sequence[Dict[str, Any]], output_path: str, skipped_output: str = "") -> None:
+def write_outputs(
+    rows: Sequence[Dict[str, Any]],
+    skipped: Sequence[Dict[str, Any]],
+    reviews: Sequence[Dict[str, Any]],
+    output_path: str,
+    skipped_output: str = "",
+) -> None:
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         pd.DataFrame(rows, columns=OUTPUT_COLS).to_excel(writer, index=False, sheet_name="UJI Products")
         if skipped:
             pd.DataFrame(skipped).to_excel(writer, index=False, sheet_name="Skipped")
+        if reviews:
+            pd.DataFrame(reviews, columns=REVIEW_SPEC_COLUMNS).to_excel(writer, index=False, sheet_name="Review Spesifikasi")
     style_output_xlsx(output_path)
     if skipped_output:
         pd.DataFrame(skipped).to_excel(skipped_output, index=False)
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Scrape katalog produk LUTRON ke format WooCommerce uji.co.id dengan kategori dari judul dan deskripsi resmi")
+    p = argparse.ArgumentParser(description="Scrape katalog produk LUTRON ke format WooCommerce nama-website-kalian dengan penghapusan spesifikasi duplikat")
     p.add_argument("--input", required=True, help="Excel berisi URL produk")
     p.add_argument("--output", default="uji_catalog_import_ready.xlsx", help="Output Excel WooCommerce")
     p.add_argument("--sheet", default=0, help="Nama atau indeks sheet input")
@@ -2990,6 +3710,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--datasheet-attempt-limit", type=int, default=20, help="Maksimum URL datasheet yang dicek per produk sebelum dinyatakan tidak ditemukan.")
     p.add_argument("--strict-source", action="store_true", help="Masukkan hanya produk yang memiliki data substansial dari halaman Lutron atau datasheet model yang terverifikasi. Default aktif secara efektif untuk mencegah output kosong.")
     p.add_argument("--strict-publish", action="store_true", help="Lewati produk yang gambar produknya tidak terverifikasi, gambar duplikat lintas model, atau memiliki flag kualitas sumber. Direkomendasikan untuk batch siap publish.")
+    p.add_argument("--allow-spec-review-publish", action="store_true", help="Kompatibilitas v16. Tidak diperlukan karena spesifikasi tidak pernah menahan produk.")
+    p.add_argument("--hold-all-spec-reviews", action="store_true", help="Kompatibilitas v16. Diabaikan karena v16 hanya menghapus duplikasi spesifikasi.")
     p.add_argument("--category-from-description", action="store_true", help="Kompatibilitas: V10 sudah selalu menentukan kategori dari model, judul input, judul resmi, dan deskripsi resmi. Spesifikasi tidak dipakai untuk kategori.")
     p.add_argument("--skip-accessories", action="store_true", help="Lewati aksesori/komponen yang sudah terkonfirmasi. Default: tetap dimasukkan")
     p.add_argument("--use-ai", action="store_true", help="Aktifkan generator konten DeepSeek")
@@ -3066,6 +3788,7 @@ def main() -> None:
     accepted: List[Dict[str, Any]] = []
     rows: List[Dict[str, Any]] = []
     skipped: List[Dict[str, Any]] = []
+    review_specs: List[Dict[str, Any]] = []
     included_accessories = 0
 
     for idx, record in enumerate(records, 1):
@@ -3102,6 +3825,13 @@ def main() -> None:
             if args.delay > 0:
                 time.sleep(args.delay)
 
+        # Canonical pipeline runs on every product, including cache hits.
+        # It combines Technical Specifications and Specifications before AI.
+        # v16 hanya menghapus baris spesifikasi yang memang duplikat.
+        # Tidak membuat review, tidak memperbaiki label, dan tidak menahan produk.
+        prepare_canonical_specs_for_product(data)
+        spec_issues: List[Dict[str, str]] = []
+
         image_state = "OK" if clean_text(data.get("image_url")) else "KOSONG"
         flags = ", ".join(data.get("quality_flags") or [])
         print(
@@ -3135,18 +3865,21 @@ def main() -> None:
             print(f"    skip incomplete source: {data.get('error') or data.get('status')}")
             continue
 
+        # v16: spesifikasi tidak pernah menjadi alasan produk ditahan.
+        # Script hanya membuang baris yang memang sama dan meneruskan sisanya.
+
         if AI_SETTINGS.get("enabled") and AI_SETTINGS.get("strict_indonesian"):
             ai_fields = get_ai_content(data, detect_family(data))
             if not ai_fields:
-                skipped.append({
-                    "url": url,
-                    "title": data.get("title", ""),
-                    "status": data.get("status", ""),
-                    "reason": "indonesian_ai_translation_failed",
-                    "error": clean_text(data.get("_ai_status")) or clean_text(data.get("error")),
-                })
-                print(f"    skip bahasa Indonesia: {data.get('_ai_status') or 'AI translation failed'}")
-                continue
+                # AI is optional content enrichment, not a publication gate.
+                # Keep the source product and use the deterministic fallback so
+                # a transient API error cannot empty the complete output file.
+                data["_ai_status"] = clean_text(data.get("_ai_status")) or "ai_translation_failed_rule_fallback_used"
+                data["error"] = _merge_source_notes(
+                    data.get("error"),
+                    "ai_translation_failed_rule_fallback_used",
+                )
+                print(f"    AI fallback: {data.get('_ai_status')}")
 
         # Strict publish is intentionally conservative: questionable source data
         # is sent to Skipped instead of being silently published.
@@ -3180,13 +3913,13 @@ def main() -> None:
             })
             print(f"    skip validasi output: {exc}")
 
-    write_outputs(rows, skipped, args.output, args.skipped_output)
+    write_outputs(rows, skipped, review_specs, args.output, args.skipped_output)
     save_cache(args.cache, cache)
     if renderer is not None:
         renderer.close()
     if AI_SETTINGS.get("enabled"):
         save_cache(AI_SETTINGS.get("cache_path", ai_cache_path), AI_SETTINGS.get("cache", {}))
-    print(f"Selesai. Produk masuk output: {len(rows)} | Diskip: {len(skipped)} | Accessories masuk: {included_accessories}")
+    print(f"Selesai. Produk masuk output: {len(rows)} | Diskip: {len(skipped)} | Review spesifikasi: {len(review_specs)} | Accessories masuk: {included_accessories}")
     print(f"Output: {args.output}")
     if AI_SETTINGS.get("enabled"):
         print(f"deepseek_ai_used={AI_STATS['used']} cache_hit={AI_STATS['cache_hit']} fallback={AI_STATS['fallback']} skipped={AI_STATS['skipped']}")
