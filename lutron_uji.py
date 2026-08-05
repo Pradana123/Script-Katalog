@@ -109,7 +109,7 @@ WEBSITE_CTA = (
     '<p>Untuk konsultasi produk, silakan kunjungi '
     '<strong><a href="https://WEBSITE_KALIAN/about-us-3/" target="_blank" rel="noopener">WEBSITE_KALIAN</a></strong> '
     'atau <strong><a href="https://WEBSITE_KALIAN/contact-us/" target="_blank" rel="noopener">hubungi kami</a></strong>. '
-    'Telepon: +62896-2784-2222.</p>'
+    'Telepon: +62no kalian.</p>'
 )
 
 NOISE_TEXT = {
@@ -6756,7 +6756,7 @@ def _v22_strip_existing_cta(value: Any) -> str:
     for paragraph in list(soup.find_all(["p", "div"])):
         text = clean_text(paragraph.get_text(" ", strip=True))
         if (
-            "+62896-2784-2222" in text
+            "+62no kalian" in text
             or "Untuk konsultasi produk" in text
             or paragraph.find("a", href=re.compile(r"WEBSITE\.co\.id/(?:about-us-3|contact-us)", re.I))
         ):
