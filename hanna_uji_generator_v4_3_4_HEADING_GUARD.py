@@ -20,8 +20,8 @@ Prinsip utama:
 15. Menghasilkan XLSX 24 kolom sesuai template impor UJI beserta lembar REVIEW.
 
 Kontak penjualan yang ditampilkan:
-WhatsApp: +62 857-1711-2222
-Email: quotations@jvm.co.id
+WhatsApp: +62 nomor_kalian
+Email: contact_email_kalian
 """
 
 from __future__ import annotations
@@ -104,9 +104,9 @@ DEFAULT_CONFIG = {
     "brand_output": "Hanna Instruments",
     "display_brand": "Hanna",
     "sku_prefix": "HANNA-",
-    "whatsapp_display": "+62 857-1711-2222",
+    "whatsapp_display": "+62 nomor_kalian",
     "whatsapp_number": "6285717112222",
-    "email": "quotations@jvm.co.id",
+    "email": "contact_email_kalian",
     "company_name": "UJI",
     "include_source_url_in_import": False,
     "download_images": False,
@@ -3648,7 +3648,7 @@ def detect_issues(
         issues.append("BLOCKED_SOURCE_PROMO")
 
     product_description = generated.get("Product Description", "")
-    if strip_html(product_description).strip() and "+62 857-1711-2222" not in product_description:
+    if strip_html(product_description).strip() and "+62 nomor_kalian" not in product_description:
         issues.append("REVIEW_CTA")
     if description_html_has_suspicious_heading_split(product_description):
         issues.append("REVIEW_DESCRIPTION_FORMAT")
@@ -4298,7 +4298,7 @@ def write_output(
         ["WhatsApp", config["whatsapp_display"]],
         ["Email", config["email"]],
         ["Catatan", "Kolom Source URL dikosongkan secara default agar tidak tampil di website. URL asli tersedia pada sheet REVIEW."],
-        ["Catatan gambar", "URL gambar sumber masih digunakan untuk proses impor. Setelah impor, simpan gambar ke Media Library uji.co.id agar tidak melakukan hotlink permanen."],
+        ["Catatan gambar", "URL gambar sumber masih digunakan untuk proses impor. Setelah impor, simpan gambar ke Media Library nama-website-kalian agar tidak melakukan hotlink permanen."],
         ["Konten", "V4.3.4 mempertahankan provenance DOM, Description Formatter deterministik, dan Heading Guard: seluruh body Description/Overview tetap menjadi Product Description, termasuk heading inline. Custom tab hanya dibuat dari dedicated source tab/panel yang benar-benar terpisah di Hanna. Jika source tidak punya description/overview, Product Description boleh kosong."],
         ["Scraping", "Mode refresh aktif secara default untuk mengambil rich content seperti Features, Principle of Operation, aplikasi, kalibrasi, GLP, data logging, isi paket, dan bagian teknis lain. Tab Spesifikasi tetap memakai data specification dari XLSX sumber dan tidak ditimpa oleh refresh website."],
         ["DeepSeek", "API key dibaca dari environment DEEPSEEK_API_KEY atau config. Translation layer berjalan sebelum product writer dan validator mengunci angka, model, unit, serta istilah teknis."],
@@ -4355,7 +4355,7 @@ def download_images(rows: List[Dict[str, str]], config: Dict[str, object]) -> No
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Mengambil konten lengkap produk Hanna dan membuat XLSX siap impor ke uji.co.id."
+        description="Mengambil konten lengkap produk Hanna dan membuat XLSX siap impor ke nama-website-kalian."
     )
     parser.add_argument("--input", default=DEFAULT_INPUT, help=f"File XLSX sumber. Default: {DEFAULT_INPUT}")
     parser.add_argument("--output", default=DEFAULT_OUTPUT, help=f"File XLSX hasil. Default: {DEFAULT_OUTPUT}")
