@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-HANNA -> UJI PRODUCT IMPORTER V4.3.4 HEADING-GUARD
+HANNA -> namawebsite PRODUCT IMPORTER V4.3.4 HEADING-GUARD
 
 Prinsip utama:
 1. Membaca data produk Hanna dari XLSX dan refresh URL produk secara default.
 2. Memisahkan body Description dari dedicated source tab/panel berdasarkan provenance DOM; inline heading di Description tidak boleh membuat custom tab.
 3. Menerjemahkan narrative evidence ke bahasa Indonesia sebelum product writer dengan proteksi angka, model, unit, standar, port, dan istilah teknis.
-4. Menggunakan registry kategori UJI sebagai kategori canonical. Taxonomy Hanna tidak pernah menjadi fallback mentah.
+4. Menggunakan registry kategori namawebsite sebagai kategori canonical. Taxonomy Hanna tidak pernah menjadi fallback mentah.
 5. Mengizinkan kategori baru yang valid, tetapi menandainya REVIEW_NEW_CATEGORY sampai disetujui.
 6. Membuat nama produk ringkas dan meta description sebagai kalimat SEO utuh.
 7. Membuat custom tab hanya dari dedicated source tab/panel yang benar-benar ada; Features/Benefits inline di Description tetap berada di Product Description.
@@ -17,11 +17,11 @@ Prinsip utama:
 12. Merapikan Product Description secara deterministik setelah validasi: paragraf, heading inline, dan feature blocks ditata tanpa menambah atau mengubah fakta.
 13. Heading inline hanya dikenali pada posisi heading yang eksplisit; kata seperti "aplikasi" di tengah kalimat tidak boleh memecah kalimat. Dangling fragment otomatis membatalkan pemisahan.
 14. Product Description tidak lagi dipotong dengan hard word-limit pada fallback/formatter; panjang mengikuti overview yang sudah lolos validasi.
-15. Menghasilkan XLSX 24 kolom sesuai template impor UJI beserta lembar REVIEW.
+15. Menghasilkan XLSX 24 kolom sesuai template impor namawebsite beserta lembar REVIEW.
 
 Kontak penjualan yang ditampilkan:
-WhatsApp: +62 857-1711-2222
-Email: quotations@jvm.co.id
+WhatsApp: +62 nomorkamu
+Email: quotations@perusahaankamu.co.id
 """
 
 from __future__ import annotations
@@ -52,13 +52,13 @@ try:
     from openpyxl.utils import get_column_letter
 except ImportError as exc:
     print("Dependensi belum tersedia.")
-    print("Jalankan: python -m pip install -r requirements_hanna_uji.txt")
+    print("Jalankan: python -m pip install -r requirements_hanna_namawebsite.txt")
     raise SystemExit(1) from exc
 
 
 VERSION = "4.3.4-heading-guard"
 DEFAULT_INPUT = "hannainst.com.xlsx"
-DEFAULT_OUTPUT = "output/uji_import_hanna_v4_3_4_heading_guard.xlsx"
+DEFAULT_OUTPUT = "output/namawebsite_import_hanna_v4_3_4_heading_guard.xlsx"
 DEFAULT_SHEET = "25-11-2025"
 
 IMPORT_COLUMNS = [
@@ -104,17 +104,17 @@ DEFAULT_CONFIG = {
     "brand_output": "Hanna Instruments",
     "display_brand": "Hanna",
     "sku_prefix": "HANNA-",
-    "whatsapp_display": "+62 857-1711-2222",
+    "whatsapp_display": "+62 nomorkamu",
     "whatsapp_number": "6285717112222",
-    "email": "quotations@jvm.co.id",
-    "company_name": "UJI",
+    "email": "quotations@perusahaankamu.co.id",
+    "company_name": "namawebsite",
     "include_source_url_in_import": False,
     "download_images": False,
     "image_directory": "output/images",
     "request_delay_seconds": 1.2,
     "request_timeout_seconds": 30,
     "max_retries": 3,
-    "user_agent": "Mozilla/5.0 (compatible; UJI-Product-Importer/4.1)",
+    "user_agent": "Mozilla/5.0 (compatible; namawebsite-Product-Importer/4.1)",
     "use_deepseek_faq": True,
     "deepseek_base_url": "https://api.deepseek.com",
     "deepseek_model": "deepseek-v4-flash",
@@ -125,16 +125,16 @@ DEFAULT_CONFIG = {
     "deepseek_temperature": 0.1,
     "deepseek_max_tokens": 1000,
     "deepseek_cache_file": "output/deepseek_faq_polish_cache_v4.json",
-    "deepseek_prompt_version": "uji-faq-polish-v4",
+    "deepseek_prompt_version": "namawebsite-faq-polish-v4",
     "faq_count": 8,
     "use_deepseek_content": True,
     "deepseek_content_cache_file": "output/deepseek_product_content_cache_v4_3_3.json",
-    "deepseek_content_prompt_version": "uji-product-provenance-tabs-v4.3.3",
+    "deepseek_content_prompt_version": "namawebsite-product-provenance-tabs-v4.3.3",
     "deepseek_content_max_tokens": 3200,
     "deepseek_content_temperature": 0.1,
     "use_deepseek_translation": True,
     "deepseek_translation_cache_file": "output/deepseek_translation_cache_v4_3.json",
-    "deepseek_translation_prompt_version": "uji-evidence-translation-v4.3",
+    "deepseek_translation_prompt_version": "namawebsite-evidence-translation-v4.3",
     "deepseek_translation_max_tokens": 6000,
     "deepseek_translation_temperature": 0.0,
     "max_source_content_chars": 30000,
@@ -617,7 +617,7 @@ def canonicalize_category(candidate: str, threshold: float = 0.88) -> Optional[s
 
 
 def infer_category_with_status(title: str, taxonomy: str, description: str) -> Tuple[str, Optional[str]]:
-    """Resolve kategori UJI tanpa memakai taxonomy Hanna sebagai fallback mentah."""
+    """Resolve kategori namawebsite tanpa memakai taxonomy Hanna sebagai fallback mentah."""
     title_text = normalize_space(title).lower()
     context = normalize_space(f"{title} {description}").lower()
 
@@ -710,7 +710,7 @@ def infer_category_with_status(title: str, taxonomy: str, description: str) -> T
     if re.search(r"\b(?:accessor(?:y|ies)|replacement|spare|cables?|holders?|adapters?|cases?|connectors?|tubing|fittings?)\b", title_text, re.I):
         return "Aksesori & Suku Cadang", None
 
-    # 3) Kategori baru yang memang valid tetapi belum ada di registry UJI.
+    # 3) Kategori baru yang memang valid tetapi belum ada di registry namawebsite.
     for proposed, patterns in VALID_NEW_CATEGORY_RULES:
         if any(re.search(pattern, title_text, re.I) for pattern in patterns):
             canonical = canonicalize_category(proposed)
@@ -789,7 +789,7 @@ def infer_parameters(
 
 def translate_product_type(title: str, category: str) -> str:
     category_map = {
-        "Larutan Kalibrasi & Reagen": "larutan kalibrasi atau reagen pengujian",
+        "Larutan Kalibrasi & Reagen": "larutan kalibrasi atau reagen pengnamawebsitean",
         "Elektrode & Probe": "elektrode atau probe pengukuran",
         "Aksesori & Suku Cadang": "aksesori atau suku cadang instrumen",
         "Laboratory Consumables": "bahan habis pakai laboratorium",
@@ -842,7 +842,7 @@ def smart_truncate(text: str, limit: int) -> str:
 
 def build_seo_title(source_sku: str, title: str, category: str, limit: int = 60) -> str:
     """Buat SEO Title 50-60 karakter dengan format komersial + otoritas distributor."""
-    suffix = " | UJI"
+    suffix = " | namawebsite"
     clean_t = re.sub(rf"^\s*(?:Hanna\s+)?{re.escape(source_sku)}\s*", "", title, flags=re.I).strip()
 
     candidates = [
@@ -1392,7 +1392,7 @@ def description_body_to_overview(source_short: str, source_description: str) -> 
     """Treat the source Description body as Product Description evidence.
 
     Inline headings such as "Features at-a-glance" remain part of OVERVIEW.
-    They do NOT authorize a UJI custom tab. This preserves source provenance.
+    They do NOT authorize a namawebsite custom tab. This preserves source provenance.
     If source_description is empty, OVERVIEW is empty (Product Description remains empty,
     while source_short will be used exclusively for Product Short Description).
     """
@@ -1448,7 +1448,7 @@ def classify_dedicated_source_tabs(source_tabs: object) -> Dict[str, List[str]]:
     """Classify only genuine source tabs/accordions/panels.
 
     An inline heading inside the Description body can never enter this function,
-    so it can never create a UJI custom tab by keyword alone.
+    so it can never create a namawebsite custom tab by keyword alone.
     """
     tabs = parse_source_tabs_json(source_tabs)
     buckets: Dict[str, List[str]] = {}
@@ -1502,7 +1502,7 @@ def parse_source_sections(source_short: str, source_description: str) -> Dict[st
 
     Full description selalu diprioritaskan. Short description hanya menjadi
     fallback jika source benar-benar tidak mempunyai description. Ini penting
-    agar Product Description UJI berasal dari body description source, bukan
+    agar Product Description namawebsite berasal dari body description source, bukan
     dari teaser singkat yang sering berisi feature labels.
     """
     has_full_description = bool(normalize_space(source_description))
@@ -2527,7 +2527,7 @@ def build_spec_html(source_sku: str, spec_rows: List[Tuple[str, str]]) -> str:
     )
     return (
         '<h2>Spesifikasi</h2>'
-        '<table class="uji-spec-table uji-spec-general">'
+        '<table class="namawebsite-spec-table namawebsite-spec-general">'
         '<thead><tr><th>Parameter</th><th>Nilai</th></tr></thead>'
         f'<tbody>{tr_html}</tbody></table>'
     )
@@ -2557,14 +2557,14 @@ def product_function_sentence(parameters: Sequence[str], category: str) -> str:
     if "larutan" in category_lower:
         return "mendukung proses kalibrasi, perawatan, atau verifikasi instrumen"
     if "reagen" in category_lower:
-        return "mendukung analisis sampel menggunakan metode pengujian yang sesuai"
+        return "mendukung analisis sampel menggunakan metode pengnamawebsitean yang sesuai"
     if "elektrode" in category_lower or "electrode" in category_lower or "probe" in category_lower:
         return "digunakan sebagai sensor atau probe pada instrumen yang kompatibel"
     if "aksesori" in category_lower or "suku cadang" in category_lower or "accessories" in category_lower or "spare" in category_lower:
         return "digunakan sebagai aksesori atau komponen pendukung instrumen"
     if "consumable" in category_lower:
         return "digunakan sebagai bahan habis pakai laboratorium sesuai fungsi produknya"
-    return "mendukung kegiatan pengukuran, pengujian, atau analisis sampel"
+    return "mendukung kegiatan pengukuran, pengnamawebsitean, atau analisis sampel"
 
 
 def build_short_description(name: str, parameters: Sequence[str], category: str, source_short: str = "") -> str:
@@ -2615,7 +2615,7 @@ def build_description(
     if parameters:
         parameter_items = "".join(f"<li>{escape_html(item)}</li>" for item in parameters)
     else:
-        parameter_items = "<li>Fungsi produk perlu disesuaikan dengan instrumen dan metode pengujian yang digunakan.</li>"
+        parameter_items = "<li>Fungsi produk perlu disesuaikan dengan instrumen dan metode pengnamawebsitean yang digunakan.</li>"
 
     application = (
         "<h2>Fungsi dan Penggunaan</h2>"
@@ -2656,7 +2656,7 @@ def build_advantages_html(name: str, parameters: Sequence[str], category: str, t
         items.append("Mendukung konektivitas nirkabel pada perangkat yang kompatibel.")
     if "digital" in lower:
         items.append("Sistem digital membantu pembacaan dan pengelolaan hasil pengukuran.")
-    items.append("Pemilihan model dapat dikonsultasikan dengan Tim UJI sebelum pemesanan.")
+    items.append("Pemilihan model dapat dikonsultasikan dengan Tim namawebsite sebelum pemesanan.")
     li = "".join(f"<li>{escape_html(item)}</li>" for item in items[:6])
     return f"<h2>Keunggulan Produk</h2><ul>{li}</ul>"
 
@@ -2743,12 +2743,12 @@ def build_function_faq_answer(
         elif "filling" in lower or "electrolyte" in lower:
             purpose = "digunakan sebagai larutan pengisi atau elektrolit pada elektrode yang sesuai"
         else:
-            purpose = "mendukung kalibrasi, perawatan, atau pengujian instrumen sesuai fungsi produknya"
+            purpose = "mendukung kalibrasi, perawatan, atau pengnamawebsitean instrumen sesuai fungsi produknya"
         return f"{name} merupakan larutan yang digunakan untuk {purpose}. Penggunaannya perlu disesuaikan dengan jenis elektrode, instrumen, dan prosedur kerja yang diterapkan."
 
     if family == "reagent":
-        target = f"parameter {parameter_text}" if parameter_text else "parameter pengujian yang sesuai"
-        return f"{name} merupakan reagen untuk membantu analisis {target}. Gunakan reagen bersama metode dan instrumen yang kompatibel agar proses pengujian mengikuti prosedur yang ditetapkan."
+        target = f"parameter {parameter_text}" if parameter_text else "parameter pengnamawebsitean yang sesuai"
+        return f"{name} merupakan reagen untuk membantu analisis {target}. Gunakan reagen bersama metode dan instrumen yang kompatibel agar proses pengnamawebsitean mengikuti prosedur yang ditetapkan."
 
     if family == "electrode":
         target = f"parameter {parameter_text}" if parameter_text else "parameter yang sesuai dengan tipe sensornya"
@@ -2757,7 +2757,7 @@ def build_function_faq_answer(
     if family == "accessory":
         return f"{name} merupakan aksesori atau komponen pengganti untuk mendukung penggunaan instrumen yang sesuai. Periksa model, bentuk konektor, ukuran, dan kompatibilitas sebelum pemesanan."
 
-    target = f"parameter {parameter_text}" if parameter_text else "parameter pengujian sesuai fungsi instrumennya"
+    target = f"parameter {parameter_text}" if parameter_text else "parameter pengnamawebsitean sesuai fungsi instrumennya"
     return f"{name} merupakan instrumen untuk mengukur atau menganalisis {target}. Pemilihan model perlu mempertimbangkan rentang, akurasi, resolusi, metode kalibrasi, dan kondisi sampel."
 
 
@@ -2921,13 +2921,13 @@ def build_reagent_faq_items(
     }]
     if parameters:
         items.append({
-            "question": f"Parameter apa yang diuji menggunakan {source_sku}?",
-            "answer": f"Reagen ini ditujukan untuk pengujian {join_indonesian(parameters)}. Pastikan metode, rentang, dan instrumen yang digunakan sesuai dengan kebutuhan analisis.",
+            "question": f"Parameter apa yang dinamawebsite menggunakan {source_sku}?",
+            "answer": f"Reagen ini ditujukan untuk pengnamawebsitean {join_indonesian(parameters)}. Pastikan metode, rentang, dan instrumen yang digunakan sesuai dengan kebutuhan analisis.",
         })
-    append_spec_faq(items, f"Metode pengujian apa yang digunakan {source_sku}?", spec_rows, (r"\bmethod\b",), limit=3)
+    append_spec_faq(items, f"Metode pengnamawebsitean apa yang digunakan {source_sku}?", spec_rows, (r"\bmethod\b",), limit=3)
     append_spec_faq(
         items,
-        f"Berapa jumlah pengujian atau isi kemasan {source_sku}?",
+        f"Berapa jumlah pengnamawebsitean atau isi kemasan {source_sku}?",
         spec_rows,
         (r"\btests?\b", r"\bnumber of tests\b", r"\bpackage\b", r"\bquantity\b"),
         limit=3,
@@ -2939,7 +2939,7 @@ def build_reagent_faq_items(
         (r"\bcompatible\b", r"\bfor use with\b", r"\binstrument\b", r"\bchecker\b", r"\bphotometer\b"),
         limit=3,
     )
-    append_spec_faq(items, f"Berapa rentang pengujian {source_sku}?", spec_rows, (r"\brange\b",), limit=3)
+    append_spec_faq(items, f"Berapa rentang pengnamawebsitean {source_sku}?", spec_rows, (r"\brange\b",), limit=3)
     return items
 
 
@@ -3465,7 +3465,7 @@ def validate_product_content(
     if bad_numbers:
         raise ValueError("AI menambahkan angka yang tidak tersedia pada bukti produk: " + ", ".join(bad_numbers[:12]))
 
-    allowed_tokens = {"UJI", "FAQ", "PC"}
+    allowed_tokens = {"namawebsite", "FAQ", "PC"}
     output_tokens = extract_upper_technical_tokens(output_text) - allowed_tokens
     evidence_tokens = extract_upper_technical_tokens(evidence) | {source_sku.upper()}
 
@@ -3649,7 +3649,7 @@ class DeepSeekProductWriter:
                 self.dirty_count += 1
 
         system_prompt = (
-            "Anda adalah technical product copywriter bahasa Indonesia untuk katalog UJI. "
+            "Anda adalah technical product copywriter bahasa Indonesia untuk katalog namawebsite. "
             "Gunakan hanya EVIDENCE. Jangan memakai pengetahuan luar, jangan mengasumsikan kompatibilitas, aplikasi, manfaat, atau spesifikasi. "
             "EVIDENCE sudah diterjemahkan ke bahasa Indonesia bila memungkinkan. Pertahankan model, angka, rentang, satuan, simbol, standar, "
             "nama metode, software, port, dan istilah teknis persis seperti bukti. Bahasa utama harus Indonesia; istilah teknis Inggris boleh dipertahankan. "
@@ -3657,7 +3657,7 @@ class DeepSeekProductWriter:
             "Jangan membuat konten untuk section yang tidak tercantum pada AVAILABLE_SECTIONS. Jika data source ringkas, hasil juga harus ringkas. "
             "Keluarkan satu objek JSON valid tanpa markdown."
         )
-        user_prompt = f"""Susun konten katalog UJI secara SOURCE-ADAPTIVE.
+        user_prompt = f"""Susun konten katalog namawebsite secara SOURCE-ADAPTIVE.
 
 ATURAN WAJIB:
 1. short_description: HANYA jika AVAILABLE_SECTIONS memuat OVERVIEW. Ringkas isi overview menjadi 1-2 kalimat. Jika OVERVIEW tidak tersedia, isi string kosong.
@@ -3672,7 +3672,7 @@ ATURAN WAJIB:
 10. Jangan mengubah atau mengonversi angka teknis. Jangan menambah fakta.
 11. Jangan menulis filler seperti 'hasil lebih akurat', 'mudah digunakan', atau 'cocok untuk berbagai aplikasi' kecuali source benar-benar menyatakannya.
 12. Jangan menulis frasa seperti 'menurut Hanna', 'berdasarkan sumber', 'berdasarkan spesifikasi', 'website resmi', atau CTA ke Hanna.
-13. Product Description dan custom tab UJI harus terasa lengkap hanya sejauh source memang lengkap. Jangan memperpanjang Product Description dengan filler.
+13. Product Description dan custom tab namawebsite harus terasa lengkap hanya sejauh source memang lengkap. Jangan memperpanjang Product Description dengan filler.
 14. Jika source description hanya satu paragraf, olah paragraf itu menjadi satu paragraf Indonesia yang utuh. Jika source description panjang, tetap prioritaskan fakta yang ada tanpa mengarang tambahan.
 15. Jangan menentukan custom tab dari kata/heading yang muncul di dalam OVERVIEW. Heading inline seperti Features at-a-glance tetap bagian Product Description. Custom tab hanya boleh berasal dari AVAILABLE_SECTIONS yang datang dari dedicated source tab/panel dan dari Specification Lock.
 16. Jika pada OVERVIEW terdapat data matriks, rentang perbandingan, tabel konversi, atau tabel fitur, pertahankan dalam format tabel Markdown (| Header 1 | Header 2 |) yang rapi di dalam field overview.
@@ -3780,7 +3780,7 @@ def build_tags(source_sku: str, category: str, parameters: Sequence[str]) -> str
         cat,
         f"Jual {cat}",
         "alat laboratorium",
-        "instrumen pengujian",
+        "instrumen pengnamawebsitean",
     ]
     for p in parameters:
         p_clean = normalize_space(p).lower()
@@ -3821,16 +3821,16 @@ def build_meta_description(
     candidates: List[str] = []
     if param_str:
         candidates.append(
-            f"Jual Hanna {sku} {cat} original untuk parameter {param_str}. Garansi resmi, harga distributor & konsultasi gratis hanya di Tim UJI."
+            f"Jual Hanna {sku} {cat} original untuk parameter {param_str}. Garansi resmi, harga distributor & konsultasi gratis hanya di Tim namawebsite."
         )
         candidates.append(
-            f"Beli Hanna {sku} {cat} ({param_str}) original Hanna Instruments. Dapatkan harga terbaik, garansi resmi dan konsultasi di UJI."
+            f"Beli Hanna {sku} {cat} ({param_str}) original Hanna Instruments. Dapatkan harga terbaik, garansi resmi dan konsultasi di namawebsite."
         )
     candidates.append(
-        f"Jual Hanna {sku} {cat} original bergaransi resmi. Dapatkan penawaran harga terbaik, stok ready dan konsultasi teknis gratis di Tim UJI."
+        f"Jual Hanna {sku} {cat} original bergaransi resmi. Dapatkan penawaran harga terbaik, stok ready dan konsultasi teknis gratis di Tim namawebsite."
     )
     candidates.append(
-        f"Distributor resmi Hanna {sku} {cat} Indonesia. Produk 100% original, garansi resmi, harga kompetitif dan konsultasi teknis di UJI."
+        f"Distributor resmi Hanna {sku} {cat} Indonesia. Produk 100% original, garansi resmi, harga kompetitif dan konsultasi teknis di namawebsite."
     )
 
     for candidate in candidates:
@@ -3883,7 +3883,7 @@ def detect_issues(
         issues.append("BLOCKED_SOURCE_PROMO")
 
     product_description = generated.get("Product Description", "")
-    if strip_html(product_description).strip() and "+62 857-1711-2222" not in product_description:
+    if strip_html(product_description).strip() and "+62 nomorkamu" not in product_description:
         issues.append("REVIEW_CTA")
     if description_html_has_suspicious_heading_split(product_description):
         issues.append("REVIEW_DESCRIPTION_FORMAT")
@@ -3898,7 +3898,7 @@ def detect_issues(
         issues.append("REVIEW_NAME_LENGTH")
 
     seo_title = generated.get("SEO Title", "")
-    if len(seo_title) < 25 or len(seo_title) > 65 or re.search(r"[|/.,:-]\s*\| UJI$", seo_title):
+    if len(seo_title) < 25 or len(seo_title) > 65 or re.search(r"[|/.,:-]\s*\| namawebsite$", seo_title):
         issues.append("REVIEW_SEO_TITLE")
 
     meta = normalize_space(generated.get("meta description", ""))
@@ -3962,7 +3962,7 @@ def transform_product(
     # 1) PROVENANCE-AWARE SOURCE MODEL.
     # Seluruh body Description tetap menjadi OVERVIEW, termasuk inline heading
     # seperti "Features at-a-glance". Hanya DOM tab/panel terpisah yang boleh
-    # masuk FEATURES/CONNECTIVITY/WHATS_INCLUDED/dll dan membuat custom tab UJI.
+    # masuk FEATURES/CONNECTIVITY/WHATS_INCLUDED/dll dan membuat custom tab namawebsite.
     description_buckets = description_body_to_overview(source_short, source_description)
     dedicated_tab_buckets = classify_dedicated_source_tabs(product.source_tabs)
     raw_buckets = merge_evidence_buckets(description_buckets, dedicated_tab_buckets)
@@ -4522,7 +4522,7 @@ def write_output(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     workbook = Workbook()
     ws = workbook.active
-    ws.title = "IMPORT_UJI"
+    ws.title = "IMPORT_namawebsite"
     ws.append(IMPORT_COLUMNS)
     # Highlight styles sesuai permintaan:
     # 1. Merah: URL sumber produk 404 / gagal diambil
@@ -4594,7 +4594,7 @@ def write_output(
 
     info = workbook.create_sheet("PETUNJUK")
     info_rows = [
-        ["HANNA -> UJI PRODUCT IMPORTER", f"Versi {VERSION}"],
+        ["HANNA -> namawebsite PRODUCT IMPORTER", f"Versi {VERSION}"],
         ["Jumlah produk", len(rows)],
         ["Produk READY", sum(1 for item in rows if item.get("SEO QA Status") == "READY")],
         ["Produk perlu review", sum(1 for item in rows if item.get("SEO QA Status") != "READY")],
@@ -4605,11 +4605,11 @@ def write_output(
         ["- Kuning", "Generator konten AI DeepSeek gagal validasi istilah teknis (menggunakan fallback source-adaptive)."],
         ["- Abu-abu", "Translator AI DeepSeek gagal validasi token kimia/teknis (menggunakan fallback aman)."],
         ["Catatan", "Kolom Source URL dikosongkan secara default agar tidak tampil di website. URL asli tersedia pada sheet REVIEW."],
-        ["Catatan gambar", "URL gambar sumber masih digunakan untuk proses impor. Setelah impor, simpan gambar ke Media Library uji.co.id agar tidak melakukan hotlink permanen."],
+        ["Catatan gambar", "URL gambar sumber masih digunakan untuk proses impor. Setelah impor, simpan gambar ke Media Library namawebsite.co.id agar tidak melakukan hotlink permanen."],
         ["Konten", "V4.3.4 mempertahankan provenance DOM, Description Formatter deterministik, dan Heading Guard: seluruh body Description/Overview tetap menjadi Product Description, termasuk heading inline. Custom tab hanya dibuat dari dedicated source tab/panel yang benar-benar terpisah di Hanna. Jika source tidak punya description/overview, Product Description boleh kosong."],
         ["Scraping", "Mode refresh aktif secara default untuk mengambil rich content seperti Features, Principle of Operation, aplikasi, kalibrasi, GLP, data logging, isi paket, dan bagian teknis lain. Tab Spesifikasi tetap memakai data specification dari XLSX sumber dan tidak ditimpa oleh refresh website."],
         ["DeepSeek", "API key dibaca dari environment DEEPSEEK_API_KEY atau config. Translation layer berjalan sebelum product writer dan validator mengunci angka, model, unit, serta istilah teknis."],
-        ["Kategori", "Daftar kategori UJI yang diberikan menjadi registry canonical. Taxonomy Hanna tidak pernah dipakai sebagai fallback mentah. Kategori baru yang valid diberi REVIEW_NEW_CATEGORY sebelum disetujui."],
+        ["Kategori", "Daftar kategori namawebsite yang diberikan menjadi registry canonical. Taxonomy Hanna tidak pernah dipakai sebagai fallback mentah. Kategori baru yang valid diberi REVIEW_NEW_CATEGORY sebelum disetujui."],
         ["Custom tab", "Maksimal tiga tab dipilih hanya dari Specification Lock dan dedicated source tab/panel: Keunggulan Produk, Isi Paket, Koneksi & Pelaporan, Instalasi, Kalibrasi, Perawatan, Kompatibilitas, atau FAQ. Inline heading di Description tidak membuat custom tab."],
         ["Publikasi", "Publikasikan produk berstatus READY terlebih dahulu. Periksa semua kode REVIEW sebelum impor massal."],
     ]
@@ -4669,13 +4669,13 @@ def download_images(rows: List[Dict[str, str]], config: Dict[str, object]) -> No
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Mengambil konten lengkap produk Hanna dan membuat XLSX siap impor ke uji.co.id."
+        description="Mengambil konten lengkap produk Hanna dan membuat XLSX siap impor ke namawebsite.co.id."
     )
     parser.add_argument("--input", default=DEFAULT_INPUT, help=f"File XLSX sumber. Default: {DEFAULT_INPUT}")
     parser.add_argument("--output", default=DEFAULT_OUTPUT, help=f"File XLSX hasil. Default: {DEFAULT_OUTPUT}")
     parser.add_argument("--sheet", default=DEFAULT_SHEET, help=f"Nama sheet sumber. Default: {DEFAULT_SHEET}")
-    parser.add_argument("--config", default="config_hanna_uji_v4_3.json", help="File konfigurasi JSON.")
-    parser.add_argument("--limit", type=int, default=0, help="Batasi jumlah produk. Gunakan 20 untuk uji coba.")
+    parser.add_argument("--config", default="config_hanna_namawebsite_v4_3.json", help="File konfigurasi JSON.")
+    parser.add_argument("--limit", type=int, default=0, help="Batasi jumlah produk. Gunakan 20 untuk namawebsite coba.")
     parser.add_argument(
         "--refresh",
         action=argparse.BooleanOptionalAction,
@@ -4699,7 +4699,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Minta DeepSeek API key secara tersembunyi.",
     )
-    parser.add_argument("--log", default="output/hanna_uji_v4_3_4.log", help="Lokasi file log.")
+    parser.add_argument("--log", default="output/hanna_namawebsite_v4_3_4.log", help="Lokasi file log.")
     parser.add_argument("--version", action="version", version=VERSION)
     return parser.parse_args(argv)
 
